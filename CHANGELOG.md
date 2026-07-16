@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Hardened job source validation, Prowlarr NZB URL trust checks, YouTube search timeout behavior, Docker build context exclusions, and filename extension preservation.
-
 ## [0.1.0] - 2026-07-16
 
 ### Added
@@ -29,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TDD task breakdown documented in docs/plans/2026-07-16-v0.1.0-foundation.md
 - .env.example with all required and optional provider secrets and URLs
 - LICENSE-NOTICE.md: private repository, no redistribution
+- GitHub Actions CI workflow: quality checks (pytest, ruff, mypy, package build) and Docker image build on every PR and push to main
+- GitHub Actions release workflow: quality gate then Docker Hub push to `noplexzone/music-manager` on `v*` tags
 
-[Unreleased]: https://github.com/private/music-manager/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/private/music-manager/releases/tag/v0.1.0
+### Fixed
+
+- Hardened job source validation, Prowlarr NZB URL trust checks, YouTube search timeout behavior, Docker build context exclusions, and filename extension preservation
+
+[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/noplexzone/music-manager/releases/tag/v0.1.0

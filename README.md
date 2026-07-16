@@ -57,6 +57,18 @@ docker compose up -d
 
 The admin UI is served at `http://localhost:8000`.
 
+## Container image
+
+The release workflow publishes tagged builds to `noplexzone/music-manager` on Docker Hub after the quality gate passes. Until a tagged workflow has completed, build the image locally with:
+
+```bash
+docker build -f docker/Dockerfile -t music-manager:0.1.0 .
+```
+
+## Continuous integration
+
+Pull requests and pushes to `main` run pytest, Ruff lint and formatting checks, mypy, Python package build, and a Docker image build. Version tags run the same quality gate before publishing the Docker image.
+
 ## Version
 
 v0.1.0 — Foundation (path preview only, no file moves)
