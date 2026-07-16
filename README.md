@@ -30,6 +30,8 @@ Files are renamed according to a strict, configurable template:
 
 Path previews are computed and stored; **no library files are moved in v0.1.0**.
 
+Extension tokens are sanitized with the same filesystem safety rules as other naming tokens, then capped at 32 characters. The final filename component is capped at 200 characters while preserving a dot plus the bounded sanitized extension.
+
 ## Stack
 
 - **Backend** — Python 3.12, FastAPI, SQLAlchemy 2.x (async), SQLite

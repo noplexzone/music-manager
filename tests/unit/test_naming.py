@@ -219,3 +219,38 @@ class TestRenderPath:
         assert len(filename) <= 200
         assert filename.startswith("01 - ")
         assert filename.endswith(".flac")
+
+    def test_long_title_and_extension_preserve_bounded_extension(self) -> None:
+        path = render_path(
+            title="タイトル" * 100,
+            album_artist="Artist",
+            album="Album",
+            year="2026",
+            track_no=1,
+            ext="拡張子" * 100,
+            template=DEFAULT,
+        )
+
+        filename = path.split("/")[-1]
+        expected_ext = "拡張子" * 10 + "拡張"
+        assert len(expected_ext) == 32
+        assert len(filename) <= 200
+        assert "." in filename
+        assert filename.endswith(f".{expected_ext}")
+
+    def test_sanitized_extension_policy_is_bounded_and_preserves_dot(self) -> None:
+        path = render_path(
+            title="T" * 400,
+            album_artist="Artist",
+            album="Album",
+            year="2026",
+            track_no=1,
+            ext=("bad/ext?." * 50),
+            template=DEFAULT,
+        )
+
+        filename = path.split("/")[-1]
+        expected_ext = "bad_ext_.bad_ext_.bad_ext_.bad_e"
+        assert len(expected_ext) == 32
+        assert len(filename) <= 200
+        assert filename.endswith(f".{expected_ext}")

@@ -39,6 +39,7 @@ _WINDOWS_RESERVED: frozenset[str] = frozenset(
 )
 
 _SEGMENT_MAX = 200
+_EXTENSION_MAX = 32
 _DEFAULT_TEMPLATE = "{album_artist}/{year} - {album}/{disc_track} - {title}.{ext}"
 
 REQUIRED_TOKENS: frozenset[str] = frozenset(["title", "ext"])
@@ -68,9 +69,14 @@ def _sanitize_segment(value: str, *, max_length: int = _SEGMENT_MAX) -> str:
     return value[:max_length]
 
 
+def _sanitize_extension(value: str) -> str:
+    """Sanitize an extension token and cap it to fit filename preservation."""
+    return _sanitize_segment(value.lstrip("."), max_length=_EXTENSION_MAX)
+
+
 def _sanitize_filename_segment(value: str, ext: str) -> str:
     sanitized = _sanitize_segment(value, max_length=max(len(value), _SEGMENT_MAX))
-    suffix = f".{_sanitize_segment(ext)}"
+    suffix = f".{ext}"
     if sanitized.endswith(suffix) and len(suffix) < _SEGMENT_MAX:
         stem = sanitized[: -len(suffix)]
         return stem[: _SEGMENT_MAX - len(suffix)] + suffix
@@ -169,7 +175,7 @@ def render_path(
     if not ext:
         raise NamingError("ext is a required token and must not be empty")
 
-    ext_clean = ext.lstrip(".")
+    ext_clean = _sanitize_extension(ext)
 
     disc_track = _render_disc_track(disc, disc_total, track_no)
 
@@ -184,7 +190,10 @@ def render_path(
         "disc_track": disc_track,
         "ext": ext_clean,
     }
-    sanitized_tokens = {key: _sanitize_segment(value) for key, value in raw_tokens.items()}
+    sanitized_tokens = {
+        key: (value if key == "ext" else _sanitize_segment(value))
+        for key, value in raw_tokens.items()
+    }
 
     try:
         raw_path = template.format(**sanitized_tokens)
