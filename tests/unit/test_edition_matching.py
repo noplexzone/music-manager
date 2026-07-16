@@ -246,3 +246,70 @@ async def test_manual_selection_is_auditable_and_sets_ready_state(
     assert manual.selected_candidate.review_state == MatchReviewState.manual_selected
     audit = json.loads(manual.selected_candidate.review_audit_json or "{}")
     assert audit == {"reviewer": "operator", "note": "matched liner notes barcode"}
+
+
+async def test_contradictory_release_attributes_force_review_even_with_mbid_agreement(
+    db_session: AsyncSession,
+) -> None:
+    release, track = await _release_with_track(db_session)
+
+    result = await resolve_release_match(
+        db_session,
+        release,
+        track,
+        [
+            EditionEvidence(
+                recording_mbid="recording-1",
+                release_mbid="release-original",
+                medium_position=1,
+                track_position=1,
+                duration_sec=180,
+                track_count=9,
+                year="2001",
+                country="GB",
+                label="Different Label",
+                catalog_number="CAT-001",
+                barcode="123456789012",
+                source="musicbrainz",
+            )
+        ],
+    )
+
+    assert result.state == ImportWorkflowState.needs_review
+    assert result.selected_candidate is None
+    reasons = result.candidates[0].match_reasons
+    assert any("track count contradicts release metadata" in reason for reason in reasons)
+    assert any("year contradicts release metadata" in reason for reason in reasons)
+    assert any("country contradicts release metadata" in reason for reason in reasons)
+    assert any("label contradicts release metadata" in reason for reason in reasons)
+
+
+async def test_manual_selection_rejects_candidate_for_another_track(
+    db_session: AsyncSession,
+) -> None:
+    release, track = await _release_with_track(db_session)
+    other_track = Track(
+        job_id=track.job_id,
+        release_id=release.id,
+        title="Other Song",
+        source="slskd",
+        import_state=ImportWorkflowState.matching,
+    )
+    db_session.add(other_track)
+    await db_session.flush()
+    other_result = await resolve_release_match(
+        db_session,
+        release,
+        other_track,
+        [EditionEvidence(recording_mbid="other", release_mbid="release-original")],
+    )
+
+    with pytest.raises(ValueError, match="candidate does not belong"):
+        await resolve_release_match(
+            db_session,
+            release,
+            track,
+            [],
+            manual_candidate_id=other_result.candidates[0].id,
+            reviewer="operator",
+        )

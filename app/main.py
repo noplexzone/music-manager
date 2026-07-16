@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
-from app.routers import health, jobs, naming, search, tracks
+from app.routers import health, imports, jobs, naming, search, tracks
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -41,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router, tags=["jobs"])
     app.include_router(tracks.router, tags=["tracks"])
     app.include_router(naming.router, tags=["naming"])
+    app.include_router(imports.router, tags=["imports"])
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def dashboard(request: Request) -> HTMLResponse:

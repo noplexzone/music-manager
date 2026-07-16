@@ -20,6 +20,7 @@ dependencies = [
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
     "tenacity>=8.3",
+    "mutagen>=1.47",
 ]
 
 [project.optional-dependencies]

@@ -117,7 +117,7 @@ def _score_evidence(release: Release, track: Track, evidence: EditionEvidence) -
         if evidence.track_count == release.track_count:
             score += 0.03
             reasons.append("track count agrees")
-        elif not has_release_agreement:
+        else:
             contradictions.append("track count contradicts release metadata")
 
     for attr, label in (("year", "year"), ("country", "country"), ("label", "label")):
@@ -126,6 +126,8 @@ def _score_evidence(release: Release, track: Track, evidence: EditionEvidence) -
         if ev and rel and ev == rel:
             score += 0.02
             reasons.append(f"{label} agrees")
+        elif ev and rel and ev != rel:
+            contradictions.append(f"{label} contradicts release metadata")
 
     for attr, label in (("barcode", "barcode"), ("catalog_number", "catalog number")):
         ev = _norm(getattr(evidence, attr))
@@ -199,10 +201,18 @@ async def _manual_select(
     review_note: str | None,
 ) -> MatchResolution:
     candidates_result = await db.execute(
-        select(ReleaseCandidate).where(ReleaseCandidate.release_id == release.id)
+        select(ReleaseCandidate).where(
+            ReleaseCandidate.release_id == release.id,
+            ReleaseCandidate.track_id == track.id,
+        )
     )
     candidates = list(candidates_result.scalars().all())
-    selected = next(candidate for candidate in candidates if candidate.id == manual_candidate_id)
+    selected = next(
+        (candidate for candidate in candidates if candidate.id == manual_candidate_id),
+        None,
+    )
+    if selected is None:
+        raise ValueError("manual candidate does not belong to the requested release track")
     for candidate in candidates:
         candidate.selected = candidate.id == manual_candidate_id
         candidate.review_state = (

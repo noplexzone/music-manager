@@ -12,11 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added release, candidate, import-plan, monitoring, acquisition, and import workflow state foundations for v0.1.1 safe staging.
 - Added staging-root configuration and containment validation for future import execution.
 - Added evidence-scored edition matching with auditable review states for unattended or manual candidate selection.
+- Added duplicate/collision-aware import planning plus verified destination-temp atomic imports with Mutagen tag readback and rollback.
+- Added import review API and Jinja review page surfaces for planned operations, collisions, tag verification, and rollback status.
 
 ### Fixed
 
 - Background job scheduling now opens its own database session instead of reusing the request-scoped session.
 - Configured pytest-asyncio fixture loop scope explicitly.
+- Edition matching now sends contradictory release attributes to review and prevents manual selection of another track's candidate.
 
 ## [0.1.0] - 2026-07-16
 
