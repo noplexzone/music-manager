@@ -10,3 +10,4 @@ def test_pytest_asyncio_loop_scope_is_explicit() -> None:
     pytest_options = data["tool"]["pytest"]["ini_options"]
 
     assert pytest_options["asyncio_default_fixture_loop_scope"] == "function"
+    assert pytest_options["asyncio_default_test_loop_scope"] == "function"

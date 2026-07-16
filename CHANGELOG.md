@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Background job scheduling now opens its own database session instead of reusing the request-scoped session.
-- Configured pytest-asyncio fixture loop scope explicitly.
+- Configured pytest-asyncio fixture and test loop scopes explicitly.
+- Packaged Jinja templates and static CSS in built distributions for clean wheel installs.
 - Edition matching now sends contradictory release attributes to review and prevents manual selection of another track's candidate.
 
 ## [0.1.0] - 2026-07-16

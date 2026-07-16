@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from importlib.resources import files
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -11,8 +11,8 @@ from fastapi.templating import Jinja2Templates
 from app.config import get_settings
 from app.routers import health, imports, jobs, naming, search, tracks
 
-_TEMPLATES_DIR = Path(__file__).parent / "templates"
-_STATIC_DIR = Path(__file__).parent / "static"
+_TEMPLATES_DIR = files("app") / "templates"
+_STATIC_DIR = files("app") / "static"
 
 logger = logging.getLogger(__name__)
 
