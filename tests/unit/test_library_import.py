@@ -19,7 +19,7 @@ from app.services.library_import import (
 
 
 async def _release_with_staged_tracks(
-    db_session: AsyncSession, tmp_path: Path, count: int = 1
+    db_session: AsyncSession, tmp_path: Path, count: int = 1, suffix: str = ".mp3"
 ) -> tuple[Release, list[Track]]:
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -41,8 +41,9 @@ async def _release_with_staged_tracks(
     await db_session.flush()
     tracks: list[Track] = []
     for index in range(1, count + 1):
-        source = staging / f"{index:02d}.mp3"
-        source.write_bytes(f"audio-{index}".encode())
+        source = staging / f"{index:02d}{suffix}"
+        source_bytes = _minimal_flac_bytes() if suffix == ".flac" else f"audio-{index}".encode()
+        source.write_bytes(source_bytes)
         track = Track(
             job_id=job.id,
             release_id=release.id,
@@ -64,6 +65,22 @@ async def _release_with_staged_tracks(
         tracks.append(track)
     await db_session.flush()
     return release, tracks
+
+
+def _minimal_flac_bytes() -> bytes:
+    min_block_size = (4096).to_bytes(2, "big")
+    max_block_size = (4096).to_bytes(2, "big")
+    min_frame_size = (0).to_bytes(3, "big")
+    max_frame_size = (0).to_bytes(3, "big")
+    stream_info = (
+        min_block_size
+        + max_block_size
+        + min_frame_size
+        + max_frame_size
+        + ((44100 << 44) | (15 << 36)).to_bytes(8, "big")
+        + bytes(16)
+    )
+    return b"fLaC" + bytes([0x80, 0, 0, 34]) + stream_info
 
 
 async def test_plan_detects_same_path_conflict_and_same_bytes_duplicate(
@@ -128,6 +145,72 @@ async def test_execute_import_copies_to_destination_temp_writes_verified_tags_an
     assert readback["title"] == "Song 1"
     assert readback["musicbrainz_trackid"] == "recording-1"
     assert plans[0].planned_operations_json is not None
+
+
+async def test_execute_import_rejects_source_symlink_swap_after_planning(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    release, tracks = await _release_with_staged_tracks(db_session, tmp_path, count=1)
+    library = tmp_path / "library"
+    plans = await plan_release_import(db_session, release, library_root=library)
+    source = Path(tracks[0].staging_path or "")
+    original_bytes = source.read_bytes()  # noqa: ASYNC240
+    outside = tmp_path / "outside.mp3"
+    outside.write_bytes(original_bytes)
+    source.unlink()  # noqa: ASYNC240
+    source.symlink_to(outside)  # noqa: ASYNC240
+
+    with pytest.raises(ImportExecutionError, match="regular non-symlink"):
+        await execute_release_import(
+            db_session, release, library_root=library, tag_writer=MutagenTagWriter()
+        )
+
+    destination = Path(plans[0].destination_path)
+    assert not destination.exists()  # noqa: ASYNC240
+    assert not list(library.rglob(f".{destination.name}.*"))
+    assert release.import_state == ImportWorkflowState.rolled_back
+    assert plans[0].status == ImportWorkflowState.failed
+
+
+async def test_execute_import_writes_and_verifies_flac_tags(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    release, _tracks = await _release_with_staged_tracks(
+        db_session, tmp_path, count=1, suffix=".flac"
+    )
+    library = tmp_path / "library"
+    await plan_release_import(db_session, release, library_root=library)
+
+    imported = await execute_release_import(
+        db_session, release, library_root=library, tag_writer=MutagenTagWriter()
+    )
+
+    destination = Path(imported[0].destination_path)
+    assert destination.suffix == ".flac"
+    assert imported[0].tag_verification_state == TagVerificationState.verified
+    readback = MutagenTagWriter().read_tags(destination)
+    assert readback["title"] == "Song 1"
+    assert readback["musicbrainz_albumid"] == "release-mbid"
+
+
+async def test_execute_import_does_not_verify_unsupported_formats(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    release, _tracks = await _release_with_staged_tracks(
+        db_session, tmp_path, count=1, suffix=".wav"
+    )
+    library = tmp_path / "library"
+    plans = await plan_release_import(db_session, release, library_root=library)
+
+    with pytest.raises(ImportExecutionError, match="tag readback failed"):
+        await execute_release_import(
+            db_session, release, library_root=library, tag_writer=MutagenTagWriter()
+        )
+
+    destination = Path(plans[0].destination_path)
+    assert not destination.exists()  # noqa: ASYNC240
+    assert plans[0].tag_verification_state == TagVerificationState.failed
+    assert release.import_state == ImportWorkflowState.rolled_back
 
 
 async def test_execute_import_rechecks_destination_race_and_rolls_back(

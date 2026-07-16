@@ -4,11 +4,13 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import no_type_check
+from typing import BinaryIO, no_type_check
 
+from mutagen.flac import FLAC
 from mutagen.id3 import ID3, TALB, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +50,33 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_fileobj(handle: BinaryIO) -> str:
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _open_regular_source_no_follow(path: Path) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ImportExecutionError("source path is not a regular non-symlink file") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ImportExecutionError("source path is not a regular non-symlink file")
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _sha256_regular_source_no_follow(path: Path) -> str:
+    with os.fdopen(_open_regular_source_no_follow(path), "rb") as handle:
+        return _sha256_fileobj(handle)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -107,34 +136,59 @@ def _tags_for(release: Release, track: Track) -> dict[str, str]:
 class MutagenTagWriter:
     @no_type_check
     def write_and_verify(self, path: Path, tags: dict[str, str]) -> bool:
-        if path.suffix.casefold() != ".mp3":
-            return True
-        id3 = ID3()
-        if title := tags.get("title"):
-            id3.add(TIT2(encoding=3, text=title))
-        if artist := tags.get("artist"):
-            id3.add(TPE1(encoding=3, text=artist))
-        if album := tags.get("album"):
-            id3.add(TALB(encoding=3, text=album))
-        if album_artist := tags.get("album_artist"):
-            id3.add(TPE2(encoding=3, text=album_artist))
-        if date := tags.get("date"):
-            id3.add(TDRC(encoding=3, text=date))
-        if tracknumber := tags.get("tracknumber"):
-            id3.add(TRCK(encoding=3, text=tracknumber))
-        if discnumber := tags.get("discnumber"):
-            id3.add(TPOS(encoding=3, text=discnumber))
-        if recording := tags.get("musicbrainz_trackid"):
-            id3.add(TXXX(encoding=3, desc="MusicBrainz Track Id", text=recording))
-        if release := tags.get("musicbrainz_albumid"):
-            id3.add(TXXX(encoding=3, desc="MusicBrainz Album Id", text=release))
-        id3.save(path, v2_version=3)
+        suffix = path.suffix.casefold()
+        if suffix == ".mp3":
+            id3 = ID3()
+            if title := tags.get("title"):
+                id3.add(TIT2(encoding=3, text=title))
+            if artist := tags.get("artist"):
+                id3.add(TPE1(encoding=3, text=artist))
+            if album := tags.get("album"):
+                id3.add(TALB(encoding=3, text=album))
+            if album_artist := tags.get("album_artist"):
+                id3.add(TPE2(encoding=3, text=album_artist))
+            if date := tags.get("date"):
+                id3.add(TDRC(encoding=3, text=date))
+            if tracknumber := tags.get("tracknumber"):
+                id3.add(TRCK(encoding=3, text=tracknumber))
+            if discnumber := tags.get("discnumber"):
+                id3.add(TPOS(encoding=3, text=discnumber))
+            if recording := tags.get("musicbrainz_trackid"):
+                id3.add(TXXX(encoding=3, desc="MusicBrainz Track Id", text=recording))
+            if release := tags.get("musicbrainz_albumid"):
+                id3.add(TXXX(encoding=3, desc="MusicBrainz Album Id", text=release))
+            id3.save(path, v2_version=3)
+        elif suffix == ".flac":
+            flac = FLAC(path)
+            for key, value in tags.items():
+                flac[key] = value
+            flac.save()
+        else:
+            return False
         readback = self.read_tags(path)
         return all(readback.get(key) == value for key, value in tags.items())
 
     @no_type_check
     def read_tags(self, path: Path) -> dict[str, str]:
-        if path.suffix.casefold() != ".mp3":
+        suffix = path.suffix.casefold()
+        if suffix == ".flac":
+            flac = FLAC(path)
+            flac_values: dict[str, str] = {}
+            for key in (
+                "title",
+                "artist",
+                "album",
+                "album_artist",
+                "date",
+                "tracknumber",
+                "discnumber",
+                "musicbrainz_trackid",
+                "musicbrainz_albumid",
+            ):
+                if tag_values := flac.get(key):
+                    flac_values[key] = str(tag_values[0])
+            return flac_values
+        if suffix != ".mp3":
             return {}
         id3 = ID3(path)
         values: dict[str, str] = {}
@@ -257,12 +311,13 @@ async def plan_release_import(
 
 def _copy_to_temp(source: Path, destination: Path, expected_hash: str) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    source_fd = _open_regular_source_no_follow(source)
     fd, raw_name = tempfile.mkstemp(
         dir=destination.parent, prefix=f".{destination.name}.", suffix=destination.suffix
     )
     temp_path = Path(raw_name)
     try:
-        with os.fdopen(fd, "wb") as temp, source.open("rb") as src:
+        with os.fdopen(source_fd, "rb") as src, os.fdopen(fd, "wb") as temp:
             shutil.copyfileobj(src, temp, length=1024 * 1024)
             temp.flush()
             os.fsync(temp.fileno())
@@ -311,7 +366,7 @@ async def execute_release_import(
             _destination_inside_root(library_root, destination)
             if _path_exists(destination):
                 raise ImportExecutionError("destination exists before import commit")
-            expected_hash = track.content_sha256 or _sha256(source)
+            expected_hash = track.content_sha256 or _sha256_regular_source_no_follow(source)
             temp = _copy_to_temp(source, destination, expected_hash)
             temp_paths.append(temp)
             plan.destination_temp_path = str(temp)
