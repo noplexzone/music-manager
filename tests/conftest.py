@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -17,11 +16,6 @@ from app.database import Base, reset_engine
 from app.main import create_app
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
-
-
-@pytest.fixture(scope="session")
-def event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
-    return asyncio.DefaultEventLoopPolicy()
 
 
 @pytest.fixture

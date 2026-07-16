@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.release import Release
     from app.models.track import Track
 
 
@@ -42,4 +43,7 @@ class Job(Base):
 
     tracks: Mapped[list[Track]] = relationship(
         "Track", back_populates="job", cascade="all, delete-orphan"
+    )
+    releases: Mapped[list[Release]] = relationship(
+        "Release", back_populates="job", cascade="all, delete-orphan"
     )

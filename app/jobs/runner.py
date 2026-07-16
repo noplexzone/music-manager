@@ -10,12 +10,15 @@ from urllib.parse import ParseResult, urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
+from app.database import get_session_factory
 from app.fingerprint.acoustid import fingerprint_file, lookup_acoustid
 from app.metadata.deezer import DeezerClient
 from app.metadata.musicbrainz import MusicBrainzClient
 from app.models.job import Job, JobStatus
 from app.models.path_preview import PathPreview
+from app.models.release import Release
 from app.models.track import FingerprintState, IdentityResolutionState, Track
+from app.models.workflow import AcquisitionState
 from app.naming.convention import NamingError, render_path
 from app.schemas.search import SearchRequest, SearchResult
 from app.sources.base import SourceAdapter
@@ -31,9 +34,25 @@ def _now() -> datetime:
     return datetime.now(tz=UTC)
 
 
-async def run_job(job_id: int, db: AsyncSession, settings: Settings | None = None) -> None:
+async def run_job(
+    job_id: int, db: AsyncSession | None = None, settings: Settings | None = None
+) -> None:
     cfg = settings or get_settings()
+    if db is None:
+        factory = get_session_factory()
+        async with factory() as session:
+            try:
+                await _run_job_in_session(job_id, session, cfg)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+        return
 
+    await _run_job_in_session(job_id, db, cfg)
+
+
+async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> None:
     job = await db.get(Job, job_id)
     if job is None:
         logger.error("Job %d not found", job_id)
@@ -50,8 +69,18 @@ async def run_job(job_id: int, db: AsyncSession, settings: Settings | None = Non
         for result in results:
             try:
                 source_job_id, source_status = await _prepare_acquisition(result, job.source, cfg)
+                release = Release(
+                    job_id=job_id,
+                    source=result.source,
+                    title=result.title,
+                    album_artist=result.artist,
+                )
+                db.add(release)
+                await db.flush()
+
                 track = Track(
                     job_id=job_id,
+                    release_id=release.id,
                     title=result.title,
                     artist=result.artist,
                     album_artist=result.artist,
@@ -59,6 +88,9 @@ async def run_job(job_id: int, db: AsyncSession, settings: Settings | None = Non
                     source_job_id=source_job_id,
                     source_status=source_status,
                     source=result.source,
+                    acquisition_state=(
+                        AcquisitionState.acquiring if source_job_id else AcquisitionState.queued
+                    ),
                     fingerprint_state=FingerprintState.pending,
                 )
                 db.add(track)

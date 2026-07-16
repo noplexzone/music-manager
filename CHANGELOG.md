@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added release, candidate, import-plan, monitoring, acquisition, and import workflow state foundations for v0.1.1 safe staging.
+- Added staging-root configuration and containment validation for future import execution.
+
+### Fixed
+
+- Background job scheduling now opens its own database session instead of reusing the request-scoped session.
+- Configured pytest-asyncio fixture loop scope explicitly.
+
 ## [0.1.0] - 2026-07-16
 
 ### Added

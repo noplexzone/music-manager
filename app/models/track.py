@@ -7,10 +7,14 @@ from sqlalchemy import Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.workflow import AcquisitionState, ImportWorkflowState
 
 if TYPE_CHECKING:
+    from app.models.import_plan import ImportPlan
     from app.models.job import Job
     from app.models.path_preview import PathPreview
+    from app.models.release import Release
+    from app.models.release_candidate import ReleaseCandidate
 
 
 class FingerprintState(StrEnum):
@@ -31,6 +35,9 @@ class Track(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    release_id: Mapped[int | None] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"), nullable=True
+    )
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     artist: Mapped[str | None] = mapped_column(Text, nullable=True)
     album_artist: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -52,6 +59,18 @@ class Track(Base):
     source_job_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     source_status: Mapped[str | None] = mapped_column(String(128), nullable=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+    acquisition_state: Mapped[AcquisitionState] = mapped_column(
+        Enum(AcquisitionState, native_enum=False, create_constraint=True),
+        nullable=False,
+        default=AcquisitionState.queued,
+    )
+    import_state: Mapped[ImportWorkflowState] = mapped_column(
+        Enum(ImportWorkflowState, native_enum=False, create_constraint=True),
+        nullable=False,
+        default=ImportWorkflowState.discovered,
+    )
+    staging_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fingerprint_state: Mapped[FingerprintState] = mapped_column(
         Enum(FingerprintState),
         nullable=False,
@@ -59,6 +78,13 @@ class Track(Base):
     )
 
     job: Mapped[Job] = relationship("Job", back_populates="tracks")
+    release: Mapped[Release | None] = relationship("Release", back_populates="tracks")
     path_previews: Mapped[list[PathPreview]] = relationship(
         "PathPreview", back_populates="track", cascade="all, delete-orphan"
+    )
+    release_candidates: Mapped[list[ReleaseCandidate]] = relationship(
+        "ReleaseCandidate", back_populates="track", cascade="all, delete-orphan"
+    )
+    import_plans: Mapped[list[ImportPlan]] = relationship(
+        "ImportPlan", back_populates="track", cascade="all, delete-orphan"
     )

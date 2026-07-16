@@ -20,7 +20,7 @@ from app.sources.youtube import YouTubeAdapter
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_TIDAL_STATUS = SourceStatus(available=False, reason="unavailable in v0.1.0")
+_TIDAL_STATUS = SourceStatus(available=False, reason="unavailable in v0.1.1")
 
 
 def _build_adapters(settings: Settings) -> dict[str, SourceAdapter]:

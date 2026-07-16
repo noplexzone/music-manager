@@ -31,9 +31,9 @@ async def create_job(
 ) -> Job:
     job = Job(source=payload.source, query=payload.query, status=JobStatus.pending)
     db.add(job)
-    await db.flush()
+    await db.commit()
     await db.refresh(job)
-    background_tasks.add_task(run_job, job.id, db)
+    background_tasks.add_task(run_job, job.id)
     return job
 
 
@@ -88,7 +88,7 @@ async def create_job_ui(
 
     job = Job(source=source, query=query, status=JobStatus.pending)
     db.add(job)
-    await db.flush()
+    await db.commit()
     await db.refresh(job)
-    background_tasks.add_task(run_job, job.id, db)
+    background_tasks.add_task(run_job, job.id)
     return RedirectResponse("/jobs/ui/list", status_code=303)
