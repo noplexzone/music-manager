@@ -25,7 +25,7 @@ A FastAPI application that coordinates multiple acquisition sources, enriches tr
 Files are renamed according to a strict, configurable template:
 
 ```
-<Artist>/<Album> (<Year>)/<DiscNo>-<TrackNo> <Title>.<ext>
+<AlbumArtist>/<Year> - <Album>/<DiscTrack> - <Title>.<ext>
 ```
 
 Path previews are computed and stored; **no library files are moved in v0.1.0**.

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Music Manager{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="layout">
+  <header>
+    <span class="logo">Music<span>Manager</span></span>
+    <nav>
+      <a href="/" {% if request.url.path == "/" %}class="active"{% endif %}>Dashboard</a>
+      <a href="/search" {% if request.url.path.startswith("/search") %}class="active"{% endif %}>Search</a>
+      <a href="/jobs/ui/list" {% if request.url.path.startswith("/jobs") %}class="active"{% endif %}>Jobs</a>
+      <a href="/api/docs" target="_blank">API</a>
+    </nav>
+  </header>
+
+  <main>
+    {% if flash_message %}
+    <div class="alert {{ flash_type | default('info') }}">{{ flash_message }}</div>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    Music Manager v0.1.0 &mdash; private, self-hosted
+  </footer>
+</div>
+</body>
+</html>

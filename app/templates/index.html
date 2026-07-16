@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Music Manager{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <p>Source availability is checked live on each page load.</p>
+</div>
+
+<section>
+  <h2 style="font-size:1rem; color:var(--text-muted); margin-bottom:1rem;">Source status</h2>
+
+  <div id="source-status-loading" style="color:var(--text-muted); font-size:0.9rem;">
+    Checking sources&hellip;
+  </div>
+
+  <div id="source-grid" class="source-grid" style="display:none"></div>
+</section>
+
+<section style="margin-top:2.5rem;">
+  <h2 style="font-size:1rem; color:var(--text-muted); margin-bottom:1rem;">Quick search</h2>
+  <form method="post" action="/search/ui" class="form-row">
+    <input type="text" name="query" placeholder="Artist, album or track&hellip;" style="flex:1; min-width:220px;" required>
+    <input type="hidden" name="sources" value="slskd,prowlarr,youtube">
+    <button type="submit" class="btn">Search</button>
+  </form>
+</section>
+
+<section style="margin-top:2.5rem;">
+  <h2 style="font-size:1rem; color:var(--text-muted); margin-bottom:1rem;">Enqueue acquisition job</h2>
+  <form method="post" action="/jobs/ui/create" class="form-row">
+    <input type="text" name="query" placeholder="Track or album query" style="flex:1; min-width:220px;" required>
+    <select name="source">
+      <option value="slskd">slskd (Soulseek)</option>
+      <option value="prowlarr">Prowlarr (Usenet)</option>
+      <option value="youtube">YouTube</option>
+    </select>
+    <button type="submit" class="btn">Enqueue</button>
+  </form>
+</section>
+
+<script>
+(async () => {
+  try {
+    const res = await fetch("/health/sources");
+    const data = await res.json();
+    const grid = document.getElementById("source-grid");
+    const loading = document.getElementById("source-status-loading");
+    const order = ["slskd","prowlarr","sabnzbd","youtube","tidal"];
+    const names = order.filter(k => k in data).concat(Object.keys(data).filter(k => !order.includes(k)));
+    names.forEach(name => {
+      const s = data[name];
+      const card = document.createElement("div");
+      card.className = "source-card";
+      const bclass = s.available ? "ok" : (name === "tidal" ? "warn" : "error");
+      const blabel = s.available ? "Available" : "Unavailable";
+      card.innerHTML = `
+        <div class="source-name">${name}</div>
+        <div><span class="badge ${bclass}"><span class="dot"></span>${blabel}</span></div>
+        ${s.reason ? `<div class="reason">${s.reason}</div>` : ""}
+      `;
+      grid.appendChild(card);
+    });
+    loading.style.display = "none";
+    grid.style.display = "grid";
+  } catch (e) {
+    document.getElementById("source-status-loading").textContent = "Failed to load source status.";
+  }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Track #{{ track.id }} – Music Manager{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>{{ track.title or "Unknown Track" }}</h1>
+  <p>Track #{{ track.id }} from job #{{ track.job_id }} via <strong>{{ track.source }}</strong></p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <h2>Identity</h2>
+    <table>
+      <tr><th>Title</th><td>{{ track.title or "–" }}</td></tr>
+      <tr><th>Artist</th><td>{{ track.artist or "–" }}</td></tr>
+      <tr><th>Album artist</th><td>{{ track.album_artist or "–" }}</td></tr>
+      <tr><th>Album</th><td>{{ track.album or "–" }}</td></tr>
+      <tr><th>Year</th><td>{{ track.year or "–" }}</td></tr>
+      <tr><th>Disc / Track</th><td>{{ track.disc or "–" }} / {{ track.track_no or "–" }}</td></tr>
+      <tr><th>Duration</th><td>{{ ("%d:%02d" % (track.duration_sec // 60, track.duration_sec % 60)) if track.duration_sec else "–" }}</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Metadata IDs</h2>
+    <table>
+      <tr><th>MBID</th><td><code>{{ track.mbid or "unresolved" }}</code></td></tr>
+      <tr><th>Deezer ID</th><td><code>{{ track.deezer_id or "–" }}</code></td></tr>
+      <tr><th>AcoustID</th><td style="word-break:break-all;"><code>{{ (track.acoustid or "")[:40] ~ ("…" if track.acoustid and track.acoustid|length > 40 else "") or "–" }}</code></td></tr>
+      <tr><th>Fingerprint</th>
+        <td>
+          {% set fs = track.fingerprint_state.value %}
+          {% set sc = "ok" if fs == "done" else ("warn" if fs == "skipped" else ("error" if fs == "failed" else "info")) %}
+          <span class="badge {{ sc }}"><span class="dot"></span>{{ fs }}</span>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Source</h2>
+    <table>
+      <tr><th>Source</th><td><span class="badge info">{{ track.source }}</span></td></tr>
+      <tr><th>Source path</th><td style="word-break:break-all; font-size:0.8rem;">{{ track.source_path or "–" }}</td></tr>
+    </table>
+  </div>
+</div>
+
+{% if track.path_previews %}
+<div class="card" style="margin-top:1.5rem;">
+  <h2>Path Previews</h2>
+  {% for preview in track.path_previews %}
+  <div style="margin-bottom:1.25rem;">
+    <div style="color:var(--text-muted); font-size:0.78rem; margin-bottom:0.35rem;">
+      Template: <code>{{ preview.naming_template }}</code>
+    </div>
+    <pre><code>{{ preview.rendered_path }}</code></pre>
+    <div style="color:var(--text-muted); font-size:0.75rem; margin-top:0.35rem;">
+      Computed {{ preview.computed_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card" style="margin-top:1.5rem;">
+  <h2>Path Previews</h2>
+  <p style="color:var(--text-muted);">No path preview computed yet.</p>
+</div>
+{% endif %}
+
+<div style="margin-top:1.5rem;">
+  <a href="/jobs/ui/list" class="btn secondary">&larr; Back to jobs</a>
+</div>
+{% endblock %}

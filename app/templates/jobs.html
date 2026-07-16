@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Jobs – Music Manager{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start;">
+  <div>
+    <h1>Acquisition Jobs</h1>
+    <p>Each job persists in SQLite. No external broker required.</p>
+  </div>
+</div>
+
+<form method="post" action="/jobs/ui/create" class="form-row" style="margin-bottom:1.5rem;">
+  <input type="text" name="query" placeholder="Track or album&hellip;" style="flex:1; min-width:220px;" required>
+  <select name="source">
+    <option value="slskd">slskd</option>
+    <option value="prowlarr">Prowlarr</option>
+    <option value="youtube">YouTube</option>
+  </select>
+  <button type="submit" class="btn">Enqueue</button>
+</form>
+
+{% if jobs %}
+<div class="card" style="padding:0;">
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Source</th>
+        <th>Query</th>
+        <th>Status</th>
+        <th>Created</th>
+        <th>Updated</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for job in jobs %}
+      {% set sc = "ok" if job.status.value == "done" else ("warn" if job.status.value == "running" else ("error" if job.status.value == "failed" else "info")) %}
+      <tr>
+        <td><code>{{ job.id }}</code></td>
+        <td><span class="badge info">{{ job.source }}</span></td>
+        <td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ job.query }}</td>
+        <td><span class="badge {{ sc }}"><span class="dot"></span>{{ job.status.value }}</span></td>
+        <td style="color:var(--text-muted); font-size:0.8rem;">{{ job.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td style="color:var(--text-muted); font-size:0.8rem;">{{ job.updated_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td><a href="/tracks?job_id={{ job.id }}" style="font-size:0.8rem;">tracks</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p style="color:var(--text-muted);">No jobs yet. Use the form above to enqueue your first acquisition.</p>
+{% endif %}
+{% endblock %}

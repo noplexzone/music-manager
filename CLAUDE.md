@@ -21,7 +21,7 @@ A private, self-hosted FastAPI application that coordinates music acquisition fr
 - AcoustID cloud lookup is optional and requires `ACOUSTID_API_KEY` to be set.
 
 ### Naming & file operations
-- The naming convention template is `{artist}/{album} ({year})/{disc}-{track} {title}.{ext}`.
+- The universal naming convention template is exactly `{album_artist}/{year} - {album}/{disc_track} - {title}.{ext}`. One-disc releases use `TT`; multi-disc releases use `D-TT`. Track numbers are two digits.
 - In v0.1.0, **compute and persist path previews only — never move, copy, rename, or delete library files**.
 - Any code that performs filesystem writes to the library root is out of scope for v0.1.0 and must not be written.
 
