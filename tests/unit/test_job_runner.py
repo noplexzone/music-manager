@@ -56,6 +56,7 @@ async def test_prowlarr_result_is_enqueued_to_sabnzbd(
     mp = monkeypatch
     assert isinstance(mp, MonkeyPatch)
     job = await _create_job(db_session, source="prowlarr")
+    test_settings = test_settings.model_copy(update={"prowlarr_url": "https://prowlarr.test"})
     calls: list[str] = []
 
     async def fake_fetch_results(job: Job, cfg: Settings) -> Sequence[SearchResult]:
@@ -63,7 +64,7 @@ async def test_prowlarr_result_is_enqueued_to_sabnzbd(
             SearchResult(
                 source="prowlarr",
                 title="Artist - Album",
-                url="https://indexer.local/file.nzb",
+                url="https://prowlarr.test/download/file.nzb",
                 format="nzb",
             )
         ]
@@ -99,7 +100,10 @@ async def test_prowlarr_result_is_enqueued_to_sabnzbd(
     assert job.status == JobStatus.done
     assert track.source_job_id == "SAB123"
     assert track.source_status == "Downloading"
-    assert calls[-2:] == ["enqueue:https://indexer.local/file.nzb:Artist - Album", "status:SAB123"]
+    assert calls[-2:] == [
+        "enqueue:https://prowlarr.test/download/file.nzb:Artist - Album",
+        "status:SAB123",
+    ]
 
 
 async def test_path_preview_naming_error_marks_job_failed(
@@ -142,6 +146,7 @@ async def test_prowlarr_rejects_non_nzb_and_loopback_urls(
 
     mp = monkeypatch
     assert isinstance(mp, MonkeyPatch)
+    test_settings = test_settings.model_copy(update={"prowlarr_url": "https://prowlarr.test"})
     calls: list[str] = []
 
     class FakeSabnzbdAdapter:
@@ -174,6 +179,12 @@ async def test_prowlarr_rejects_non_nzb_and_loopback_urls(
             title="Html",
             url="https://indexer.local/file.html",
             format="html",
+        ),
+        SearchResult(
+            source="prowlarr",
+            title="Untrusted DNS host",
+            url="https://attacker.example/file.nzb",
+            format="nzb",
         ),
     ]
 

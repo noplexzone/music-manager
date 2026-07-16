@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,7 +109,7 @@ async def _prepare_acquisition(
 ) -> tuple[str | None, str | None]:
     if source != "prowlarr":
         return None, None
-    nzb_url = _validated_nzb_url(result)
+    nzb_url = _validated_nzb_url(result, cfg)
 
     sab = SabnzbdAdapter(cfg.sabnzbd_url, cfg.sabnzbd_api_key)
     sab_job_id = await sab.enqueue(nzb_url, name=result.title)
@@ -122,7 +121,7 @@ async def _prepare_acquisition(
     return sab_job_id, state.reason
 
 
-def _validated_nzb_url(result: SearchResult) -> str:
+def _validated_nzb_url(result: SearchResult, cfg: Settings) -> str:
     if result.format != "nzb" or not result.url:
         raise RuntimeError("Prowlarr result is not a validated NZB URL")
 
@@ -131,20 +130,26 @@ def _validated_nzb_url(result: SearchResult) -> str:
         raise RuntimeError("Prowlarr result has invalid NZB URL")
     if not parsed.path.endswith(".nzb"):
         raise RuntimeError("Prowlarr result URL is not an NZB")
-    if _is_loopback_or_private_host(parsed.hostname):
-        raise RuntimeError("Prowlarr result has unsafe NZB URL host")
+    trusted = _trusted_prowlarr_origin(cfg)
+    result_origin = _origin_tuple(parsed)
+    if trusted is None:
+        raise RuntimeError("Prowlarr trusted NZB URL host is not configured")
+    if result_origin != trusted:
+        raise RuntimeError("Prowlarr result URL host is not trusted")
     return result.url
 
 
-def _is_loopback_or_private_host(hostname: str) -> bool:
-    host = hostname.strip().casefold().rstrip(".")
-    if host in {"localhost", "localhost.localdomain"}:
-        return True
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return address.is_loopback or address.is_private or address.is_link_local
+def _trusted_prowlarr_origin(cfg: Settings) -> tuple[str, str, int | None] | None:
+    parsed = urlparse(cfg.prowlarr_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    return _origin_tuple(parsed)
+
+
+def _origin_tuple(parsed: ParseResult) -> tuple[str, str, int | None]:
+    if parsed.hostname is None:
+        raise RuntimeError("Prowlarr result has invalid NZB URL")
+    return (parsed.scheme.casefold(), parsed.hostname.casefold().rstrip("."), parsed.port)
 
 
 async def _enrich_musicbrainz(track: Track, cfg: Settings) -> None:

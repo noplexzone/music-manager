@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
 from app.models.job import JobStatus
 
+JobSource = Literal["slskd", "prowlarr", "youtube"]
+
 
 class JobCreate(BaseModel):
-    source: str
+    source: JobSource
     query: str
 
 

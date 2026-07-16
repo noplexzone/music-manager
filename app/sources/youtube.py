@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -9,6 +10,8 @@ from app.sources.base import CapabilityState
 logger = logging.getLogger(__name__)
 
 _MAX_SEARCH_RESULTS = 20
+_DEFAULT_SEARCH_TIMEOUT_SEC = 30.0
+_YTDLP_SOCKET_TIMEOUT_SEC = 15.0
 
 
 def _ytdlp_available() -> bool:
@@ -23,8 +26,11 @@ def _ytdlp_available() -> bool:
 class YouTubeAdapter:
     name = "youtube"
 
-    def __init__(self, cookies_file: str = "") -> None:
+    def __init__(
+        self, cookies_file: str = "", search_timeout_sec: float = _DEFAULT_SEARCH_TIMEOUT_SEC
+    ) -> None:
         self._cookies_file = cookies_file
+        self._search_timeout_sec = search_timeout_sec
 
     async def health(self) -> CapabilityState:
         if _ytdlp_available():
@@ -35,14 +41,13 @@ class YouTubeAdapter:
         if not _ytdlp_available():
             return []
 
-        import yt_dlp
-
         ydl_opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": "in_playlist",
             "skip_download": True,
             "default_search": "ytsearch",
+            "socket_timeout": _YTDLP_SOCKET_TIMEOUT_SEC,
         }
         if self._cookies_file:
             ydl_opts["cookiefile"] = self._cookies_file
@@ -50,8 +55,13 @@ class YouTubeAdapter:
         search_url = f"ytsearch{_MAX_SEARCH_RESULTS}:{query.query}"
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info: dict[str, Any] = ydl.extract_info(search_url, download=False)
+            info = await asyncio.wait_for(
+                asyncio.to_thread(self._extract_info, ydl_opts, search_url),
+                timeout=self._search_timeout_sec,
+            )
+        except TimeoutError:
+            logger.warning("YouTube search timed out after %.1f seconds", self._search_timeout_sec)
+            return []
         except Exception as exc:
             logger.warning("YouTube search failed: %s", exc)
             return []
@@ -78,3 +88,10 @@ class YouTubeAdapter:
                 )
             )
         return results
+
+    def _extract_info(self, ydl_opts: dict[str, Any], search_url: str) -> dict[str, Any]:
+        import yt_dlp
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_url, download=False)
+        return info if isinstance(info, dict) else {}

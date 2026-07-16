@@ -12,10 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.jobs.runner import run_job
 from app.models.job import Job, JobStatus
-from app.schemas.job import JobCreate, JobRead
+from app.schemas.job import JobCreate, JobRead, JobSource
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_ALLOWED_JOB_SOURCES: set[JobSource] = {"slskd", "prowlarr", "youtube"}
 
 
 def _get_templates(request: Request) -> Jinja2Templates:
@@ -79,6 +80,9 @@ async def create_job_ui(
     source = str(form.get("source", "slskd")).strip()
     query = str(form.get("query", "")).strip()
 
+    if source not in _ALLOWED_JOB_SOURCES:
+        logger.warning("Rejected unsupported job source from UI: %s", source)
+        return RedirectResponse("/jobs/ui/list", status_code=303)
     if not query:
         return RedirectResponse("/jobs/ui/list", status_code=303)
 

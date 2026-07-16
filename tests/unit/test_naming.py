@@ -203,3 +203,19 @@ class TestRenderPath:
         path = render_path(title="A Track", ext="mp3", template=DEFAULT)
         assert "Unknown Artist" in path or "Unknown Album" in path
         assert path.endswith(".mp3")
+
+    def test_long_title_preserves_filename_extension_and_segment_limit(self) -> None:
+        path = render_path(
+            title="T" * 400,
+            album_artist="Artist",
+            album="Album",
+            year="2026",
+            track_no=1,
+            ext="flac",
+            template=DEFAULT,
+        )
+
+        filename = path.split("/")[-1]
+        assert len(filename) <= 200
+        assert filename.startswith("01 - ")
+        assert filename.endswith(".flac")

@@ -48,7 +48,7 @@ class NamingError(ValueError):
     pass
 
 
-def _sanitize_segment(value: str) -> str:
+def _sanitize_segment(value: str, *, max_length: int = _SEGMENT_MAX) -> str:
     """Sanitize a single path segment (no slashes allowed)."""
     value = unicodedata.normalize("NFC", value)
     value = _UNSAFE_CHARS.sub("_", value)
@@ -65,7 +65,16 @@ def _sanitize_segment(value: str) -> str:
     if not value:
         value = "_"
 
-    return value[:_SEGMENT_MAX]
+    return value[:max_length]
+
+
+def _sanitize_filename_segment(value: str, ext: str) -> str:
+    sanitized = _sanitize_segment(value, max_length=max(len(value), _SEGMENT_MAX))
+    suffix = f".{_sanitize_segment(ext)}"
+    if sanitized.endswith(suffix) and len(suffix) < _SEGMENT_MAX:
+        stem = sanitized[: -len(suffix)]
+        return stem[: _SEGMENT_MAX - len(suffix)] + suffix
+    return _sanitize_segment(value)
 
 
 def _render_disc_track(disc: int | None, disc_total: int | None, track_no: int | None) -> str:
@@ -191,7 +200,12 @@ def render_path(
             )
 
     parts = PurePosixPath(raw_path).parts
-    sanitized_parts = [_sanitize_segment(p) for p in parts]
+    sanitized_parts = [
+        _sanitize_filename_segment(p, sanitized_tokens["ext"])
+        if index == len(parts) - 1
+        else _sanitize_segment(p)
+        for index, p in enumerate(parts)
+    ]
     rendered = str(Path(*sanitized_parts)) if sanitized_parts else "_"
 
     return rendered

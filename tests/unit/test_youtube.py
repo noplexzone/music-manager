@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 from app.schemas.search import SearchRequest
@@ -71,6 +72,38 @@ class TestYouTubeSearch:
             patch("yt_dlp.YoutubeDL", return_value=mock_ydl),
         ):
             adapter = YouTubeAdapter()
+            results = await adapter.search(SearchRequest(query="test"))
+
+        assert results == []
+
+    async def test_search_runs_ytdlp_in_worker_thread(self) -> None:
+        mock_info: dict[str, object] = {"entries": []}
+        calls: list[str] = []
+
+        async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
+            calls.append(getattr(func, "__name__", repr(func)))
+            return mock_info
+
+        with (
+            patch("app.sources.youtube._ytdlp_available", return_value=True),
+            patch("app.sources.youtube.asyncio.to_thread", side_effect=fake_to_thread),
+        ):
+            adapter = YouTubeAdapter(search_timeout_sec=5.0)
+            results = await adapter.search(SearchRequest(query="test"))
+
+        assert results == []
+        assert calls == ["_extract_info"]
+
+    async def test_search_returns_empty_when_ytdlp_exceeds_timeout(self) -> None:
+        async def slow_to_thread(func: object, *args: object, **kwargs: object) -> object:
+            await asyncio.sleep(1)
+            return {"entries": []}
+
+        with (
+            patch("app.sources.youtube._ytdlp_available", return_value=True),
+            patch("app.sources.youtube.asyncio.to_thread", side_effect=slow_to_thread),
+        ):
+            adapter = YouTubeAdapter(search_timeout_sec=0.01)
             results = await adapter.search(SearchRequest(query="test"))
 
         assert results == []
