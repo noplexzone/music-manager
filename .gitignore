@@ -1,0 +1,112 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.virtualenv/
+
+# FastAPI / Uvicorn
+*.pid
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+nosetests.xml
+test-results/
+junit.xml
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyright/
+.ruff_cache/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.env
+secrets/
+
+# SQLite & data stores
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+music_library/
+library/
+
+# Download artifacts
+downloads/
+incomplete/
+*.nzb
+*.torrent
+*.tmp
+*.part
+*.crdownload
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Docker
+.docker/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Distribution
+*.tar.gz
+*.zip
+*.whl
+
+# Alembic (generated migrations go in version control, but not auto-generated env state)
+alembic/versions/__pycache__/
+
+# Node (if any front-end tooling is added)
+node_modules/
+npm-debug.log*
+yarn-error.log*
