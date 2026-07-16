@@ -40,6 +40,10 @@ def _path_exists(path: Path) -> bool:
     return path.exists()
 
 
+def _is_regular_non_symlink(path: Path) -> bool:
+    return not path.is_symlink() and path.is_file()
+
+
 def _unlink_missing_ok(path: Path) -> None:
     path.unlink(missing_ok=True)
 
@@ -355,6 +359,7 @@ async def execute_release_import(
     library_root: Path,
     tag_writer: MutagenTagWriter | None = None,
     before_commit: Callable[[Path], None] | None = None,
+    replace_existing_verified: bool = False,
 ) -> list[ImportPlan]:
     tag_writer = tag_writer or MutagenTagWriter()
     plans_result = await db.execute(
@@ -368,6 +373,7 @@ async def execute_release_import(
 
     created_destinations: list[Path] = []
     temp_paths: list[Path] = []
+    backup_paths: dict[Path, Path] = {}
     release.import_state = ImportWorkflowState.importing
     for plan in plans:
         plan.status = ImportWorkflowState.importing
@@ -381,7 +387,7 @@ async def execute_release_import(
             source = Path(plan.source_path)
             destination = Path(plan.destination_path)
             _destination_inside_root(library_root, destination)
-            if _path_exists(destination):
+            if _path_exists(destination) and not replace_existing_verified:
                 raise ImportExecutionError("destination exists before import commit")
             expected_hash = track.content_sha256 or _sha256_regular_source_no_follow(source)
             temp = _copy_to_temp(source, destination, expected_hash)
@@ -393,7 +399,18 @@ async def execute_release_import(
             plan.tag_verification_state = TagVerificationState.verified
             if before_commit is not None:
                 before_commit(destination)
-            if _path_exists(destination):
+            if replace_existing_verified:
+                if not _path_exists(destination) or not _is_regular_non_symlink(destination):
+                    raise ImportExecutionError("upgrade destination changed before atomic rename")
+                backup_fd, backup_name = tempfile.mkstemp(
+                    dir=destination.parent, prefix=f".{destination.name}.", suffix=".backup"
+                )
+                os.close(backup_fd)
+                backup = Path(backup_name)
+                _unlink_missing_ok(backup)
+                os.replace(destination, backup)
+                backup_paths[destination] = backup
+            elif _path_exists(destination):
                 raise ImportExecutionError("destination appeared before atomic rename")
             os.replace(temp, destination)
             _fsync_directory(destination.parent)
@@ -405,12 +422,19 @@ async def execute_release_import(
             plan.collision_state = CollisionState.clear
         release.import_state = ImportWorkflowState.imported
         await db.flush()
+        for backup in backup_paths.values():
+            backup.unlink(missing_ok=True)
         return plans
     except Exception as exc:
         for temp in temp_paths:
             temp.unlink(missing_ok=True)
         for destination in reversed(created_destinations):
             destination.unlink(missing_ok=True)
+        for destination, backup in backup_paths.items():
+            if backup.exists():
+                destination.unlink(missing_ok=True)
+                os.replace(backup, destination)
+                _fsync_directory(destination.parent)
         detail = str(exc)
         release.import_state = ImportWorkflowState.rolled_back
         release.rollback_detail = detail

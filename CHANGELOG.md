@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added evidence-scored edition matching with auditable review states for unattended or manual candidate selection.
 - Added duplicate/collision-aware import planning plus verified destination-temp atomic imports with Mutagen tag readback and rollback.
 - Added import review API and Jinja review page surfaces for planned operations, collisions, tag verification, and rollback status.
+- Added persisted quality profiles and monitoring history, non-overlapping cancellable checks, meaningful quality ranking, and verified rollback-safe upgrades.
 
 ### Fixed
 
