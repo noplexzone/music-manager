@@ -65,6 +65,16 @@ def upgrade() -> None:
         native_enum=False,
         create_constraint=True,
     )
+    match_review_state = sa.Enum(
+        "pending",
+        "auto_selected",
+        "needs_review",
+        "manual_selected",
+        "rejected",
+        name="matchreviewstate",
+        native_enum=False,
+        create_constraint=True,
+    )
     monitoring_state = sa.Enum(
         "active",
         "paused",
@@ -148,8 +158,11 @@ def upgrade() -> None:
         sa.Column("catalog_number", sa.String(128), nullable=True),
         sa.Column("barcode", sa.String(64), nullable=True),
         sa.Column("quality_json", sa.Text, nullable=True),
+        sa.Column("evidence_json", sa.Text, nullable=True),
         sa.Column("match_score", sa.Float, nullable=True),
         sa.Column("match_reasons_json", sa.Text, nullable=True),
+        sa.Column("review_state", match_review_state, nullable=False, server_default="pending"),
+        sa.Column("review_audit_json", sa.Text, nullable=True),
         sa.Column("selected", sa.Boolean, nullable=False, server_default=sa.false()),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False

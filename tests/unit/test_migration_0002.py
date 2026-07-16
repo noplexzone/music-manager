@@ -25,6 +25,8 @@ def test_0002_migration_defines_release_import_state_tables() -> None:
         "discovered",
         "needs_review",
         "rolled_back",
+        "auto_selected",
+        "manual_selected",
     ):
         assert f'"{state}"' in text
 

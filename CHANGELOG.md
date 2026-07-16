@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added release, candidate, import-plan, monitoring, acquisition, and import workflow state foundations for v0.1.1 safe staging.
 - Added staging-root configuration and containment validation for future import execution.
+- Added evidence-scored edition matching with auditable review states for unattended or manual candidate selection.
 
 ### Fixed
 
