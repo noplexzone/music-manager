@@ -172,6 +172,40 @@ async def test_execute_import_rejects_source_symlink_swap_after_planning(
     assert plans[0].status == ImportWorkflowState.failed
 
 
+async def test_execute_import_rejects_source_ancestor_symlink_swap_after_planning(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    release, tracks = await _release_with_staged_tracks(db_session, tmp_path, count=1)
+    library = tmp_path / "library"
+    source = Path(tracks[0].staging_path or "")
+    nested = source.parent / "nested"
+    nested.mkdir()
+    nested_source = nested / source.name
+    source.rename(nested_source)  # noqa: ASYNC240
+    tracks[0].staging_path = str(nested_source)
+    tracks[0].source_path = str(nested_source)
+    release.staging_path = str(source.parent)
+    plans = await plan_release_import(db_session, release, library_root=library)
+    original_bytes = nested_source.read_bytes()  # noqa: ASYNC240
+    original_nested = source.parent / "nested-original"
+    nested.rename(original_nested)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / source.name).write_bytes(original_bytes)
+    nested.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ImportExecutionError, match="regular non-symlink"):
+        await execute_release_import(
+            db_session, release, library_root=library, tag_writer=MutagenTagWriter()
+        )
+
+    destination = Path(plans[0].destination_path)
+    assert not destination.exists()  # noqa: ASYNC240
+    assert not list(library.rglob(f".{destination.name}.*"))
+    assert release.import_state == ImportWorkflowState.rolled_back
+    assert plans[0].status == ImportWorkflowState.failed
+
+
 async def test_execute_import_writes_and_verifies_flac_tags(
     db_session: AsyncSession, tmp_path: Path
 ) -> None:

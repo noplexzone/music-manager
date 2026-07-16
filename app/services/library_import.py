@@ -60,11 +60,28 @@ def _sha256_fileobj(handle: BinaryIO) -> str:
 
 
 def _open_regular_source_no_follow(path: Path) -> int:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    absolute = path.absolute()
+    parts = absolute.parts
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_fd: int | None = None
     try:
-        fd = os.open(path, flags)
+        directory_fd = os.open(absolute.anchor, directory_flags)
+        for part in parts[1:-1]:
+            next_fd = os.open(part, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        fd = os.open(parts[-1], file_flags, dir_fd=directory_fd)
     except OSError as exc:
         raise ImportExecutionError("source path is not a regular non-symlink file") from exc
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise ImportExecutionError("source path is not a regular non-symlink file")
