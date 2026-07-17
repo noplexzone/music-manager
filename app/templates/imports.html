@@ -20,8 +20,8 @@
         <td>{{ release.album_artist or "Unknown Artist" }}</td>
         <td>{{ release.import_state.value }}</td>
         <td>
-          <form method="post" action="/imports/releases/{{ release.id }}/plan" style="display:inline"><button class="btn" type="submit">Plan</button></form>
-          <form method="post" action="/imports/releases/{{ release.id }}/execute" style="display:inline"><button class="btn" type="submit">Import</button></form>
+          <form method="post" action="/imports/ui/releases/{{ release.id }}/plan" style="display:inline"><button class="btn" type="submit">Plan</button></form>
+          <form method="post" action="/imports/ui/releases/{{ release.id }}/execute" style="display:inline"><button class="btn" type="submit">Import</button></form>
         </td>
       </tr>
     {% endfor %}

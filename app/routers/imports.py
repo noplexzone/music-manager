@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,6 +83,39 @@ async def execute_release(
     except ImportExecutionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return [_plan_dict(plan) for plan in plans]
+
+
+@router.post("/ui/releases/{release_id}/plan", response_class=RedirectResponse)
+async def plan_release_from_review(
+    release_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    _user: Annotated[object, Depends(require_mutation)],
+) -> RedirectResponse:
+    release = await db.get(Release, release_id)
+    if release is None:
+        raise HTTPException(status_code=404, detail="Release not found")
+    await plan_release_import(
+        db, release, library_root=settings.library_root, naming_template=settings.naming_template
+    )
+    return RedirectResponse("/imports/ui/review", status_code=303)
+
+
+@router.post("/ui/releases/{release_id}/execute", response_class=RedirectResponse)
+async def execute_release_from_review(
+    release_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    _user: Annotated[object, Depends(require_mutation)],
+) -> RedirectResponse:
+    release = await db.get(Release, release_id)
+    if release is None:
+        raise HTTPException(status_code=404, detail="Release not found")
+    try:
+        await execute_release_import(db, release, library_root=settings.library_root)
+    except ImportExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RedirectResponse("/imports/ui/review", status_code=303)
 
 
 @router.get("/ui/review", response_class=HTMLResponse)

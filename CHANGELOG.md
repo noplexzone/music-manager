@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - First-run owner setup now uses a database-enforced single-owner claim and returns a deterministic conflict when concurrent setup requests race.
 - Background job scheduling now opens its own database session instead of reusing the request-scoped session.
 - Configured pytest-asyncio fixture and test loop scopes explicitly.
+- Import Review Plan and Import forms now use dedicated POST-redirect-GET handlers, returning the browser to the refreshed review page instead of navigating to POST-only API URLs.
 - Packaged Jinja templates and static CSS in built distributions for clean wheel installs.
 - Edition matching now sends contradictory release attributes to review and prevents manual selection of another track's candidate.
 - Import execution now rejects post-plan symlink source swaps and only marks supported formats tag-verified after Mutagen readback.
