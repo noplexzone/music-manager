@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -18,6 +19,9 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
+    environment_url = os.environ.get("DATABASE_URL")
+    if environment_url:
+        return environment_url
     url = config.get_main_option("sqlalchemy.url")
     if url:
         return url
