@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}First-run setup — Music Manager{% endblock %}
+{% block content %}
+<section class="card"><h1>Create owner account</h1><p>This one-time setup creates the first owner.</p>
+<form method="post" action="/api/auth/setup">
+<label>Username <input name="username" required maxlength="64" autocomplete="username"></label>
+<label>Password <input name="password" type="password" required minlength="14" autocomplete="new-password"></label>
+<button type="submit">Create owner</button></form></section>
+{% endblock %}

@@ -9,12 +9,13 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_user, require_mutation
 from app.database import get_db
 from app.jobs.runner import run_job
 from app.models.job import Job, JobStatus
 from app.schemas.job import JobCreate, JobRead, JobSource
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
 _ALLOWED_JOB_SOURCES: set[JobSource] = {"slskd", "prowlarr", "youtube"}
 
@@ -28,6 +29,7 @@ async def create_job(
     payload: JobCreate,
     background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _user: Annotated[object, Depends(require_mutation)],
 ) -> Job:
     job = Job(source=payload.source, query=payload.query, status=JobStatus.pending)
     db.add(job)
@@ -75,6 +77,7 @@ async def create_job_ui(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _user: Annotated[object, Depends(require_mutation)],
 ) -> RedirectResponse:
     form = await request.form()
     source = str(form.get("source", "slskd")).strip()

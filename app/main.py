@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import logging
 from importlib.resources import files
+from typing import Annotated
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import Response
 
+from app.auth import get_current_user, setup_complete
 from app.config import get_settings
-from app.routers import health, imports, jobs, naming, search, tracks
+from app.database import get_db
+from app.routers import auth, health, imports, jobs, naming, search, tracks
 
 _TEMPLATES_DIR = files("app") / "templates"
 _STATIC_DIR = files("app") / "static"
@@ -37,6 +42,7 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     app.include_router(health.router, tags=["health"])
+    app.include_router(auth.router, tags=["auth"])
     app.include_router(search.router, tags=["search"])
     app.include_router(jobs.router, tags=["jobs"])
     app.include_router(tracks.router, tags=["tracks"])
@@ -44,7 +50,16 @@ def create_app() -> FastAPI:
     app.include_router(imports.router, tags=["imports"])
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def dashboard(request: Request) -> HTMLResponse:
+    async def dashboard(
+        request: Request,
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> Response:
+        if not await setup_complete(db):
+            return RedirectResponse("/setup", status_code=307)
+        try:
+            await get_current_user(request, db)
+        except HTTPException:
+            return RedirectResponse("/login", status_code=307)
         templates: Jinja2Templates = request.app.state.templates
         return templates.TemplateResponse(request, "index.html", {})
 

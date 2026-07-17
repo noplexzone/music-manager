@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_debug: bool = False
     secret_key: str = Field(..., min_length=1)
+    session_ttl_seconds: int = Field(default=43_200, ge=300, le=2_592_000)
+    auth_cookie_secure: bool = True
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./data/music_manager.db"

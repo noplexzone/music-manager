@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_user, require_mutation
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.import_plan import ImportPlan
@@ -18,7 +19,7 @@ from app.services.library_import import (
     plan_release_import,
 )
 
-router = APIRouter(prefix="/imports")
+router = APIRouter(prefix="/imports", dependencies=[Depends(get_current_user)])
 
 
 def _get_templates(request: Request) -> Jinja2Templates:
@@ -56,6 +57,7 @@ async def plan_release(
     release_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    _user: Annotated[object, Depends(require_mutation)],
 ) -> list[dict[str, object]]:
     release = await db.get(Release, release_id)
     if release is None:
@@ -71,6 +73,7 @@ async def execute_release(
     release_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    _user: Annotated[object, Depends(require_mutation)],
 ) -> list[dict[str, object]]:
     release = await db.get(Release, release_id)
     if release is None:
