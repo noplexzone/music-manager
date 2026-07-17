@@ -15,28 +15,11 @@ from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
 from app.sources.slskd import SlskdAdapter
+from app.sources.tidal_status import TIDAL_STATUS
 from app.sources.youtube import YouTubeAdapter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-_TIDAL_REASON = (
-    "TIDAL acquisition unavailable: no supported lawful authenticated external downloader is "
-    "configured; requires an operator-provided backend authorized for permanent local downloads "
-    "with health, search, enqueue, status, cancellation, staging, and provenance support."
-)
-_TIDAL_STATUS = SourceStatus(
-    available=False,
-    reason=_TIDAL_REASON,
-    details={
-        "code": "backend_not_configured",
-        "prerequisites": [
-            "operator-confirmed rights for permanent local downloads",
-            "authenticated live health and version negotiation",
-            "search, enqueue, status, cancellation, staging, and provenance capabilities",
-        ],
-    },
-)
 
 
 def _build_adapters(settings: Settings) -> dict[str, SourceAdapter]:
@@ -83,7 +66,7 @@ async def health(
                 available=result.available, reason=result.reason, details=result.extra
             )
 
-    sources["tidal"] = _TIDAL_STATUS
+    sources["tidal"] = TIDAL_STATUS
 
     db_writable = await _check_db(db)
 
@@ -124,5 +107,5 @@ async def health_sources(
                 available=result.available, reason=result.reason, details=result.extra
             )
 
-    sources["tidal"] = _TIDAL_STATUS
+    sources["tidal"] = TIDAL_STATUS
     return sources

@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import signal
 import sys
+import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from app.schemas.search import SearchRequest, SearchResult
 from app.sources.base import CapabilityState
@@ -18,6 +21,13 @@ _MAX_SEARCH_RESULTS = 20
 _DEFAULT_SEARCH_TIMEOUT_SEC = 30.0
 _PROCESS_STOP_GRACE_SEC = 2.0
 _YTDLP_SOCKET_TIMEOUT_SEC = 15
+_HEALTH_PROBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+
+
+@dataclass(frozen=True)
+class AcquiredMedia:
+    path: Path
+    provenance: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -80,7 +90,7 @@ def _cookie_status(cookie_file: str) -> tuple[bool, str, str]:
     return True, "configured", "Cookies are configured"
 
 
-def _classify_failure(stderr: bytes) -> ProviderError:
+def _classify_failure(stderr: bytes, operation: str = "search") -> ProviderError:
     text = stderr.decode("utf-8", errors="replace").casefold()
     if "sign in" in text or "login" in text or "authentication" in text:
         code, message, retryable = "auth_required", "YouTube authentication is required", False
@@ -104,7 +114,7 @@ def _classify_failure(stderr: bytes) -> ProviderError:
         )
     else:
         code, message, retryable = "extractor_error", "YouTube extractor failed", True
-    return ProviderError(code, message, "search", retryable)
+    return ProviderError(code, message, operation, retryable)
 
 
 async def _stop_process(process: asyncio.subprocess.Process) -> None:
@@ -138,12 +148,74 @@ class YouTubeAdapter:
             )
         valid, cookie_state, reason = _cookie_status(self._cookies_file)
         details: dict[str, object] = {
-            "code": "ok" if valid else cookie_state,
+            "code": cookie_state,
             "version": _ytdlp_version(),
             "cookies": cookie_state,
             "auth": "not_probed",
+            "throttling": "not_probed",
+            "audio_formats": "not_probed",
         }
-        return CapabilityState(available=valid, reason=None if valid else reason, extra=details)
+        if not valid:
+            return CapabilityState(False, reason, details)
+        process = await asyncio.create_subprocess_exec(
+            *(self._base_command() + ["--dump-single-json", "--skip-download", _HEALTH_PROBE_URL]),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), self._search_timeout_sec
+            )
+        except TimeoutError:
+            await _stop_process(process)
+            details.update(code="timeout", auth="unknown", throttling="unknown")
+            return CapabilityState(False, "YouTube health probe timed out", details)
+        except asyncio.CancelledError:
+            await _stop_process(process)
+            raise
+        if process.returncode != 0:
+            failure = _classify_failure(stderr, "health")
+            details.update(
+                code=failure.code,
+                auth="required"
+                if failure.code in {"auth_required", "cookies_invalid_or_expired"}
+                else "unknown",
+                throttling="rate_limited" if failure.code == "rate_limited" else "not_detected",
+            )
+            return CapabilityState(False, failure.message, details)
+        try:
+            info = json.loads(stdout)
+            formats = info.get("formats", []) if isinstance(info, dict) else []
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            formats = []
+        has_audio = any(
+            isinstance(item, dict) and item.get("acodec") not in {None, "none"} for item in formats
+        )
+        details.update(
+            code="ok" if has_audio else "format_unavailable",
+            auth="cookie_access_ok" if self._cookies_file else "public_access_ok",
+            throttling="not_detected",
+            audio_formats="available" if has_audio else "unavailable",
+        )
+        return CapabilityState(
+            has_audio,
+            None if has_audio else "No suitable YouTube audio format is available",
+            details,
+        )
+
+    def _base_command(self) -> list[str]:
+        command = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--no-warnings",
+            "--socket-timeout",
+            str(_YTDLP_SOCKET_TIMEOUT_SEC),
+        ]
+        if self._cookies_file:
+            command.extend(["--cookies", self._cookies_file])
+        return command
 
     async def search(self, query: SearchRequest) -> list[SearchResult]:
         if not _ytdlp_available():
@@ -152,19 +224,12 @@ class YouTubeAdapter:
         if not valid:
             raise ProviderError(code, reason, "search")
 
-        command = [
-            sys.executable,
-            "-m",
-            "yt_dlp",
+        command = self._base_command() + [
             "--dump-single-json",
             "--flat-playlist",
             "--skip-download",
             "--no-warnings",
-            "--socket-timeout",
-            str(_YTDLP_SOCKET_TIMEOUT_SEC),
         ]
-        if self._cookies_file:
-            command.extend(["--cookies", self._cookies_file])
         command.append(f"ytsearch{_MAX_SEARCH_RESULTS}:{query.query}")
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -196,6 +261,95 @@ class YouTubeAdapter:
                 "extractor_error", "YouTube extractor returned invalid data", "search"
             )
         return self._results(info)
+
+    async def acquire(self, url: str, staging_root: Path) -> AcquiredMedia:
+        if not _ytdlp_available():
+            raise ProviderError("ytdlp_missing", "yt-dlp is not installed", "acquire")
+        parsed = urlparse(url)
+        video_id = parse_qs(parsed.query).get("v", [""])[0]
+        safe_id = video_id.replace("-", "").replace("_", "")
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname not in {"youtube.com", "www.youtube.com"}
+            or not safe_id.isalnum()
+        ):
+            raise ProviderError("invalid_result", "YouTube result URL is invalid", "acquire")
+        parent = staging_root / "youtube"
+        final_dir = parent / video_id
+        temp_dir = parent / f".{video_id}.{uuid.uuid4().hex}.partial"
+        staging_root.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 - bounded setup
+        if staging_root.is_symlink() or (  # noqa: ASYNC240 - reject link escape
+            parent.exists() and parent.is_symlink()
+        ):
+            raise ProviderError("unsafe_staging", "YouTube staging root is unsafe", "acquire")
+        if final_dir.exists() or final_dir.is_symlink():
+            raise ProviderError(
+                "staging_collision", "YouTube staging destination exists", "acquire"
+            )
+        temp_dir.mkdir(parents=True, exist_ok=False)
+        output = temp_dir / "audio.%(ext)s"
+        command = self._base_command() + [
+            "--no-playlist",
+            "--format",
+            "bestaudio",
+            "--print-json",
+            "--output",
+            str(output),
+            f"https://www.youtube.com/watch?v={video_id}",
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), self._search_timeout_sec
+                )
+            except TimeoutError as exc:
+                await _stop_process(process)
+                raise ProviderError(
+                    "timeout", "YouTube acquisition timed out", "acquire", True
+                ) from exc
+            except asyncio.CancelledError:
+                await _stop_process(process)
+                raise
+            if process.returncode != 0:
+                raise _classify_failure(stderr, "acquire")
+            try:
+                info = json.loads(stdout)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise ProviderError(
+                    "extractor_error", "YouTube extractor returned invalid data", "acquire"
+                ) from exc
+            artifacts = [
+                item
+                for item in temp_dir.iterdir()
+                if item.is_file() and not item.is_symlink() and ".part" not in item.name
+            ]
+            if len(artifacts) != 1 or artifacts[0].stat().st_size == 0:
+                raise ProviderError(
+                    "artifact_invalid",
+                    "YouTube acquisition produced no verified audio artifact",
+                    "acquire",
+                )
+            artifact_name = artifacts[0].name
+            os.rename(temp_dir, final_dir)
+            provenance = {
+                "provider": "youtube",
+                "video_id": video_id,
+                "format_id": info.get("format_id"),
+                "extension": info.get("ext"),
+                "audio_codec": info.get("acodec"),
+                "ytdlp_version": _ytdlp_version(),
+                "cookies_used": bool(self._cookies_file),
+            }
+            return AcquiredMedia(final_dir / artifact_name, provenance)
+        finally:
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     @staticmethod
     def _results(info: dict[str, Any]) -> list[SearchResult]:

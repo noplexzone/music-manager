@@ -19,6 +19,7 @@ class JobStatus(StrEnum):
     running = "running"
     done = "done"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class Job(Base):

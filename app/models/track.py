@@ -71,6 +71,7 @@ class Track(Base):
     )
     staging_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    acquisition_provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     fingerprint_state: Mapped[FingerprintState] = mapped_column(
         Enum(FingerprintState),
         nullable=False,
