@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -7,6 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response as StarletteResponse
 
@@ -29,6 +31,7 @@ from app.database import get_db
 from app.models.auth import AppUser, AuthSession, UserRole
 
 router = APIRouter()
+_setup_owner_lock = asyncio.Lock()
 
 
 class Credentials(BaseModel):
@@ -92,14 +95,26 @@ async def setup_owner(
     if await setup_complete(db):
         raise HTTPException(status_code=409, detail="Setup is already complete")
     validate_password(payload.password)
-    user = AppUser(
-        username=payload.username,
-        password_hash=hash_password(payload.password),
-        role=UserRole.owner,
-    )
-    db.add(user)
-    await db.flush()
-    token, session = await create_session(db, user, settings)
+    password_hash = hash_password(payload.password)
+    async with _setup_owner_lock:
+        # Refresh the preflight transaction after waiting for another local claimant.
+        # The database partial unique index remains the cross-process authority.
+        await db.rollback()
+        if await setup_complete(db):
+            raise HTTPException(status_code=409, detail="Setup is already complete")
+        user = AppUser(
+            username=payload.username,
+            password_hash=password_hash,
+            role=UserRole.owner,
+        )
+        db.add(user)
+        try:
+            await db.flush()
+            token, session = await create_session(db, user, settings)
+            await db.commit()
+        except IntegrityError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="Setup is already complete") from exc
     _set_auth_cookies(response, token, session, settings)
     return {"username": user.username, "role": user.role.value, "csrf_token": session.csrf_token}
 

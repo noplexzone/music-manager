@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
 import pytest
@@ -151,3 +152,54 @@ def test_login_attempt_store_evicts_oldest_active_key(
         "attacker-2:username-2",
         "attacker-3:username-3",
     ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_owner_setup_is_an_atomic_single_claim(
+    unauthenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.routers import auth as auth_router
+
+    original_setup_complete = auth_router.setup_complete
+    both_checked = asyncio.Event()
+    check_count = 0
+
+    async def synchronized_setup_complete(db: object) -> bool:
+        nonlocal check_count
+        complete = await original_setup_complete(db)  # type: ignore[arg-type]
+        if not complete:
+            check_count += 1
+            if check_count == 2:
+                both_checked.set()
+            await asyncio.wait_for(both_checked.wait(), timeout=2)
+        return complete
+
+    monkeypatch.setattr(auth_router, "setup_complete", synchronized_setup_complete)
+    usernames = ("owner-one", "owner-two")
+    responses = await asyncio.gather(
+        *(
+            unauthenticated_client.post(
+                "/api/auth/setup",
+                json={"username": username, "password": "Concurrent-Owner-Password-42"},
+            )
+            for username in usernames
+        )
+    )
+
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    loser = next(response for response in responses if response.status_code == 409)
+    assert loser.json() == {"detail": "Setup is already complete"}
+
+    winner_index = next(
+        index for index, response in enumerate(responses) if response.status_code == 201
+    )
+    unauthenticated_client.cookies.clear()
+    login_statuses = []
+    for username in usernames:
+        login = await unauthenticated_client.post(
+            "/api/auth/login",
+            json={"username": username, "password": "Concurrent-Owner-Password-42"},
+        )
+        login_statuses.append(login.status_code)
+    assert login_statuses[winner_index] == 200
+    assert login_statuses[1 - winner_index] == 401

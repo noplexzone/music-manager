@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- First-run owner setup now uses a database-enforced single-owner claim and returns a deterministic conflict when concurrent setup requests race.
 - Background job scheduling now opens its own database session instead of reusing the request-scoped session.
 - Configured pytest-asyncio fixture and test loop scopes explicitly.
 - Packaged Jinja templates and static CSS in built distributions for clean wheel installs.
