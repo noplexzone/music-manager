@@ -90,7 +90,9 @@ def _token_hash(token: str) -> str:
 
 
 async def setup_complete(db: AsyncSession) -> bool:
-    return bool(await db.scalar(select(func.count(AppUser.id))))
+    return bool(
+        await db.scalar(select(func.count(AppUser.id)).where(AppUser.role == UserRole.owner))
+    )
 
 
 async def create_session(
@@ -139,6 +141,12 @@ async def require_mutation(
 ) -> AppUser:
     session: AuthSession = request.state.auth_session
     supplied = request.headers.get("X-CSRF-Token")
+    if not supplied and request.headers.get("content-type", "").startswith(
+        ("application/x-www-form-urlencoded", "multipart/form-data")
+    ):
+        form = await request.form()
+        form_token = form.get("csrf_token")
+        supplied = str(form_token) if form_token is not None else None
     cookie = request.cookies.get("csrf")
     if (
         not supplied

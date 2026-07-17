@@ -145,11 +145,27 @@ class PinnedDestination:
                 continue
         raise PinnedDestinationError("could not allocate destination temporary file")
 
-    def reserve_name(self, *, suffix: str) -> str:
-        fd, name = self.create_temp(suffix=suffix)
-        os.close(fd)
-        self.unlink(name)
-        return name
+    def backup_existing(self, *, suffix: str) -> str:
+        """Atomically claim a random backup name before removing the live name."""
+        for _attempt in range(100):
+            name = f".{self.name}.{secrets.token_hex(8)}{suffix}"
+            try:
+                os.link(
+                    self.name,
+                    name,
+                    src_dir_fd=self.parent_fd,
+                    dst_dir_fd=self.parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                continue
+            try:
+                self.unlink(self.name)
+            except OSError:
+                self.unlink(name)
+                raise
+            return name
+        raise PinnedDestinationError("could not allocate destination backup file")
 
     def open_read(self, name: str) -> BinaryIO:
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import stat
@@ -21,6 +22,8 @@ from app.models.track import Track
 from app.models.workflow import ImportWorkflowState
 from app.naming.convention import NamingError, render_path
 from app.services.pinned_destination import PinnedDestination
+
+logger = logging.getLogger(__name__)
 
 _DESTINATION_TEMPLATE = "{album_artist}/{year} - {album}/{disc_track} - {title}.{ext}"
 
@@ -375,14 +378,23 @@ def _rollback_pinned_filesystem(
     backup_paths: list[tuple[PinnedDestination, str, str]],
 ) -> None:
     for pinned, temp_name in temp_paths:
-        pinned.unlink(temp_name)
+        try:
+            pinned.unlink(temp_name)
+        except OSError:
+            logger.exception("failed to remove import temporary file during rollback")
     for pinned, destination_name in reversed(created_destinations):
-        pinned.unlink(destination_name)
+        try:
+            pinned.unlink(destination_name)
+        except OSError:
+            logger.exception("failed to remove imported destination during rollback")
     for pinned, destination_name, backup_name in backup_paths:
         if pinned.exists(backup_name):
-            pinned.unlink(destination_name)
-            pinned.replace(backup_name, destination_name)
-            pinned.fsync()
+            try:
+                # os.replace overwrites a surviving new destination atomically.
+                pinned.replace(backup_name, destination_name)
+                pinned.fsync()
+            except OSError:
+                logger.exception("failed to restore library backup during rollback")
 
 
 async def execute_release_import(
@@ -439,8 +451,7 @@ async def execute_release_import(
             if replace_existing_verified:
                 if not pinned.is_regular_non_symlink():
                     raise ImportExecutionError("upgrade destination changed before atomic rename")
-                backup_name = pinned.reserve_name(suffix=".backup")
-                pinned.replace(pinned.name, backup_name)
+                backup_name = pinned.backup_existing(suffix=".backup")
                 backup_paths.append((pinned, pinned.name, backup_name))
             elif pinned.exists():
                 raise ImportExecutionError("destination appeared before atomic rename")

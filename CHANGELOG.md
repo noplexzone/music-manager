@@ -22,11 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - First-run owner setup now uses a database-enforced single-owner claim and returns a deterministic conflict when concurrent setup requests race.
 - Background job scheduling now opens its own database session instead of reusing the request-scoped session.
 - Configured pytest-asyncio fixture and test loop scopes explicitly.
-- Import Review Plan and Import forms now use dedicated POST-redirect-GET handlers, returning the browser to the refreshed review page instead of navigating to POST-only API URLs.
+- Import Review Plan and Import forms now use CSRF-protected POST-redirect-GET handlers with a non-JavaScript form fallback, returning the browser to the refreshed review page instead of navigating to POST-only API URLs.
 - Packaged Jinja templates and static CSS in built distributions for clean wheel installs.
 - Edition matching now sends contradictory release attributes to review and prevents manual selection of another track's candidate.
 - Import execution now rejects post-plan symlink source swaps and only marks supported formats tag-verified after Mutagen readback.
-- Import filesystem changes now follow the surrounding database transaction: failed commits restore staged sources and prior library bytes, while descriptor-pinned destination directories reject ancestor swaps before atomic rename.
+- Import filesystem changes now follow the surrounding database transaction: failed commits restore staged sources and prior library bytes, rollback callbacks isolate cleanup failures, backup names are claimed atomically, and descriptor-pinned destination directories reject ancestor swaps before atomic rename.
 - Import execution now rejects post-plan symlink swaps in every staged source path component.
 - Monitoring upgrades now require the approved selected release candidate, verify candidate-bound track artifacts and hashes, and isolate post-commit backup cleanup from rollback.
 - YouTube search now uses a bounded, cancellable yt-dlp subprocess with sanitized structured failures and truthful cookie/version health details; TIDAL reports exact lawful backend prerequisites while remaining unavailable.

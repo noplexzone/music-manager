@@ -17,6 +17,7 @@ from app.services.library_import import (
     execute_release_import,
     plan_release_import,
 )
+from app.services.pinned_destination import PinnedDestination
 
 
 async def _release_with_staged_tracks(
@@ -425,3 +426,43 @@ async def test_destination_ancestor_swap_immediately_before_commit_cannot_escape
         path.name for path in outside.iterdir() if path.name.startswith(f".{destination.name}.")
     )
     assert Path(plans[0].source_path).exists()  # noqa: ASYNC240
+
+
+async def test_rollback_restores_backup_when_first_destination_unlink_fails(
+    db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release, tracks = await _release_with_staged_tracks(db_session, tmp_path, count=1)
+    library = tmp_path / "library"
+    plans = await plan_release_import(db_session, release, library_root=library)
+    await db_session.commit()
+    destination = Path(plans[0].destination_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    old_bytes = b"old-library-bytes"
+    destination.write_bytes(old_bytes)  # noqa: ASYNC240
+    staged_source = Path(tracks[0].staging_path or "")
+
+    await execute_release_import(
+        db_session,
+        release,
+        library_root=library,
+        tag_writer=MutagenTagWriter(),
+        replace_existing_verified=True,
+    )
+    assert destination.read_bytes() != old_bytes  # noqa: ASYNC240
+
+    original_unlink = PinnedDestination.unlink
+    failed_once = False
+
+    def fail_first_destination_unlink(self: PinnedDestination, name: str) -> None:
+        nonlocal failed_once
+        if name == self.name and not failed_once:
+            failed_once = True
+            raise PermissionError("forced destination cleanup failure")
+        original_unlink(self, name)
+
+    monkeypatch.setattr(PinnedDestination, "unlink", fail_first_destination_unlink)
+    await db_session.rollback()
+
+    assert failed_once
+    assert destination.read_bytes() == old_bytes  # noqa: ASYNC240
+    assert staged_source.exists()  # noqa: ASYNC240

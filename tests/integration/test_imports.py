@@ -59,7 +59,19 @@ async def test_import_review_form_actions_use_post_redirect_get(
         await session.commit()
         release_id = release.id
 
-    planned = await client.post(f"/imports/ui/releases/{release_id}/plan", follow_redirects=False)
+    csrf_header = client.headers.pop("X-CSRF-Token")
+    for action in ("plan", "execute"):
+        rejected = await client.post(
+            f"/imports/ui/releases/{release_id}/{action}", follow_redirects=False
+        )
+        assert rejected.status_code == 403
+
+    planned = await client.post(
+        f"/imports/ui/releases/{release_id}/plan",
+        data={"csrf_token": client.cookies["csrf"]},
+        follow_redirects=False,
+    )
+    client.headers["X-CSRF-Token"] = csrf_header
     assert planned.status_code == 303
     assert planned.headers["location"] == "/imports/ui/review"
     review = await client.get(planned.headers["location"])

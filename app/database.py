@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator, Callable
 
 from sqlalchemy import event
@@ -12,6 +13,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Session
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -39,7 +42,10 @@ def _run_after_commit_callbacks(session: Session) -> None:
     callbacks = list(session.info.pop(_AFTER_COMMIT_KEY, []))
     session.info.pop(_AFTER_ROLLBACK_KEY, None)
     for callback in callbacks:
-        callback()
+        try:
+            callback()
+        except Exception:
+            logger.exception("after-commit transaction callback failed")
 
 
 @event.listens_for(Session, "after_rollback")
@@ -47,7 +53,10 @@ def _run_after_rollback_callbacks(session: Session) -> None:
     callbacks = list(reversed(session.info.pop(_AFTER_ROLLBACK_KEY, [])))
     session.info.pop(_AFTER_COMMIT_KEY, None)
     for callback in callbacks:
-        callback()
+        try:
+            callback()
+        except Exception:
+            logger.exception("after-rollback transaction callback failed")
 
 
 def _make_engine(url: str | None = None) -> AsyncEngine:
