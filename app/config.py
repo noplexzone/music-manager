@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     # MusicBrainz
     musicbrainz_app_name: str = "music-manager"
-    musicbrainz_app_version: str = "0.1.1"
+    musicbrainz_app_version: str = "0.1.2"
     musicbrainz_contact: str = ""
 
     # Deezer
