@@ -347,5 +347,7 @@ async def test_second_backup_cleanup_failure_does_not_roll_back_first_track(
         tag_writer=AcceptTags(),  # type: ignore[arg-type]
         replace_existing_verified=True,
     )
+    assert calls == 0
+    await db_session.commit()
     assert calls == 2
     assert [path.read_bytes() for path in destinations] == [b"new 1", b"new 2"]

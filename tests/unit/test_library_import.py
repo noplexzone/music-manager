@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.import_plan import CollisionState, TagVerificationState
+from app.models.import_plan import CollisionState, ImportPlan, TagVerificationState
 from app.models.job import Job, JobStatus
 from app.models.release import Release
 from app.models.track import Track
@@ -296,3 +297,131 @@ async def test_rollback_removes_prior_imported_tracks_after_later_tag_failure(
     assert not list(library.rglob("*.mp3"))
     assert Path(tracks[0].staging_path or "").exists()  # noqa: ASYNC240
     assert Path(tracks[1].staging_path or "").exists()  # noqa: ASYNC240
+
+
+async def _assert_persisted_import_state_unchanged(
+    db_session: AsyncSession, release_id: int, track_id: int
+) -> None:
+    factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    async with factory() as fresh:
+        persisted_release = await fresh.get(Release, release_id)
+        persisted_track = await fresh.get(Track, track_id)
+        persisted_plan = (
+            await fresh.execute(select(ImportPlan).where(ImportPlan.release_id == release_id))
+        ).scalar_one()
+        assert persisted_release is not None
+        assert persisted_track is not None
+        assert persisted_release.import_state == ImportWorkflowState.ready
+        assert persisted_track.import_state == ImportWorkflowState.ready
+        assert persisted_plan.status == ImportWorkflowState.ready
+
+
+async def test_commit_failure_removes_new_destination_and_restores_persisted_state(
+    db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release, tracks = await _release_with_staged_tracks(db_session, tmp_path, count=1)
+    library = tmp_path / "library"
+    plans = await plan_release_import(db_session, release, library_root=library)
+    await db_session.commit()
+    release_id = release.id
+    track_id = tracks[0].id
+    assert release_id is not None
+    assert track_id is not None
+    source = Path(tracks[0].staging_path or "")
+
+    await execute_release_import(
+        db_session, release, library_root=library, tag_writer=MutagenTagWriter()
+    )
+    destination = Path(plans[0].destination_path)
+    assert destination.exists()  # noqa: ASYNC240
+
+    original_commit = type(db_session.sync_session).commit
+
+    def fail_commit(_session: object) -> None:
+        raise RuntimeError("forced commit failure")
+
+    monkeypatch.setattr(type(db_session.sync_session), "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="forced commit failure"):
+        await db_session.commit()
+    monkeypatch.setattr(type(db_session.sync_session), "commit", original_commit)
+    await db_session.rollback()
+
+    assert not destination.exists()  # noqa: ASYNC240
+    assert source.exists()  # noqa: ASYNC240
+    await _assert_persisted_import_state_unchanged(db_session, release_id, track_id)
+
+
+async def test_commit_failure_restores_replaced_destination_and_persisted_state(
+    db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release, tracks = await _release_with_staged_tracks(db_session, tmp_path, count=1)
+    library = tmp_path / "library"
+    plans = await plan_release_import(db_session, release, library_root=library)
+    await db_session.commit()
+    release_id = release.id
+    track_id = tracks[0].id
+    assert release_id is not None
+    assert track_id is not None
+    destination = Path(plans[0].destination_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    old_bytes = b"verified-old-library-bytes"
+    destination.write_bytes(old_bytes)  # noqa: ASYNC240
+    source = Path(tracks[0].staging_path or "")
+
+    await execute_release_import(
+        db_session,
+        release,
+        library_root=library,
+        tag_writer=MutagenTagWriter(),
+        replace_existing_verified=True,
+    )
+    assert destination.read_bytes() != old_bytes  # noqa: ASYNC240
+
+    original_commit = type(db_session.sync_session).commit
+
+    def fail_commit(_session: object) -> None:
+        raise RuntimeError("forced commit failure")
+
+    monkeypatch.setattr(type(db_session.sync_session), "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="forced commit failure"):
+        await db_session.commit()
+    monkeypatch.setattr(type(db_session.sync_session), "commit", original_commit)
+    await db_session.rollback()
+
+    assert destination.read_bytes() == old_bytes  # noqa: ASYNC240
+    assert source.exists()  # noqa: ASYNC240
+    assert not list(destination.parent.glob(f".{destination.name}.*.backup"))
+    await _assert_persisted_import_state_unchanged(db_session, release_id, track_id)
+
+
+async def test_destination_ancestor_swap_immediately_before_commit_cannot_escape_root(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    release, _tracks = await _release_with_staged_tracks(db_session, tmp_path, count=1)
+    library = tmp_path / "library"
+    plans = await plan_release_import(db_session, release, library_root=library)
+    destination = Path(plans[0].destination_path)
+    moved_parent = tmp_path / "moved-original-parent"
+    outside = tmp_path / "outside-target"
+    outside.mkdir()
+
+    def swap_parent(target: Path) -> None:
+        target.parent.rename(moved_parent)
+        target.parent.symlink_to(outside, target_is_directory=True)
+        pinned_temp = next(moved_parent.glob(f".{target.name}.*{target.suffix}"))
+        (outside / pinned_temp.name).write_bytes(b"attacker-controlled")
+
+    with pytest.raises(ImportExecutionError, match="destination directory changed"):
+        await execute_release_import(
+            db_session,
+            release,
+            library_root=library,
+            tag_writer=MutagenTagWriter(),
+            before_commit=swap_parent,
+        )
+
+    assert not (outside / destination.name).exists()
+    assert sorted(path.name for path in outside.iterdir()) == sorted(
+        path.name for path in outside.iterdir() if path.name.startswith(f".{destination.name}.")
+    )
+    assert Path(plans[0].source_path).exists()  # noqa: ASYNC240

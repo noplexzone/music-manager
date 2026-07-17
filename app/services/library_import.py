@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 import stat
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO, no_type_check
@@ -15,11 +14,13 @@ from mutagen.id3 import ID3, TALB, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import register_transaction_callbacks
 from app.models.import_plan import CollisionState, ImportPlan, TagVerificationState
 from app.models.release import Release
 from app.models.track import Track
 from app.models.workflow import ImportWorkflowState
 from app.naming.convention import NamingError, render_path
+from app.services.pinned_destination import PinnedDestination
 
 _DESTINATION_TEMPLATE = "{album_artist}/{year} - {album}/{disc_track} - {title}.{ext}"
 
@@ -342,26 +343,46 @@ async def plan_release_import(
     return plans
 
 
-def _copy_to_temp(source: Path, destination: Path, expected_hash: str) -> Path:
-    destination.parent.mkdir(parents=True, exist_ok=True)
+def _copy_to_temp(source: Path, pinned: PinnedDestination, expected_hash: str) -> tuple[str, Path]:
     source_fd = _open_regular_source_no_follow(source)
-    fd, raw_name = tempfile.mkstemp(
-        dir=destination.parent, prefix=f".{destination.name}.", suffix=destination.suffix
-    )
-    temp_path = Path(raw_name)
+    fd, temp_name = pinned.create_temp(suffix=pinned.destination.suffix)
+    temp_path = pinned.proc_path(temp_name)
     try:
         with os.fdopen(source_fd, "rb") as src, os.fdopen(fd, "wb") as temp:
             shutil.copyfileobj(src, temp, length=1024 * 1024)
             temp.flush()
             os.fsync(temp.fileno())
-        if _sha256(temp_path) != expected_hash:
+        with pinned.open_read(temp_name) as temp_read:
+            copied_hash = _sha256_fileobj(temp_read)
+        if copied_hash != expected_hash:
             raise ImportExecutionError(
                 "short copy or checksum mismatch while staging destination temp"
             )
     except Exception:
-        temp_path.unlink(missing_ok=True)
+        pinned.unlink(temp_name)
         raise
-    return temp_path
+    return temp_name, temp_path
+
+
+def _close_pinned_destinations(destinations: list[PinnedDestination]) -> None:
+    for pinned in reversed(destinations):
+        pinned.close()
+
+
+def _rollback_pinned_filesystem(
+    temp_paths: list[tuple[PinnedDestination, str]],
+    created_destinations: list[tuple[PinnedDestination, str]],
+    backup_paths: list[tuple[PinnedDestination, str, str]],
+) -> None:
+    for pinned, temp_name in temp_paths:
+        pinned.unlink(temp_name)
+    for pinned, destination_name in reversed(created_destinations):
+        pinned.unlink(destination_name)
+    for pinned, destination_name, backup_name in backup_paths:
+        if pinned.exists(backup_name):
+            pinned.unlink(destination_name)
+            pinned.replace(backup_name, destination_name)
+            pinned.fsync()
 
 
 async def execute_release_import(
@@ -383,9 +404,10 @@ async def execute_release_import(
     if any(plan.status != ImportWorkflowState.ready for plan in plans):
         raise ImportExecutionError("release has import plans that are not ready")
 
-    created_destinations: list[Path] = []
-    temp_paths: list[Path] = []
-    backup_paths: dict[Path, Path] = {}
+    pinned_destinations: list[PinnedDestination] = []
+    created_destinations: list[tuple[PinnedDestination, str]] = []
+    temp_paths: list[tuple[PinnedDestination, str]] = []
+    backup_paths: list[tuple[PinnedDestination, str, str]] = []
     release.import_state = ImportWorkflowState.importing
     for plan in plans:
         plan.status = ImportWorkflowState.importing
@@ -399,52 +421,77 @@ async def execute_release_import(
             source = Path(plan.source_path)
             destination = Path(plan.destination_path)
             _destination_inside_root(library_root, destination)
-            if _path_exists(destination) and not replace_existing_verified:
+            pinned = PinnedDestination.open(library_root, destination)
+            pinned_destinations.append(pinned)
+            if pinned.exists() and not replace_existing_verified:
                 raise ImportExecutionError("destination exists before import commit")
             expected_hash = track.content_sha256 or _sha256_regular_source_no_follow(source)
-            temp = _copy_to_temp(source, destination, expected_hash)
-            temp_paths.append(temp)
-            plan.destination_temp_path = str(temp)
-            if not tag_writer.write_and_verify(temp, _tags_for(release, track)):
+            temp_name, temp_path = _copy_to_temp(source, pinned, expected_hash)
+            temp_paths.append((pinned, temp_name))
+            plan.destination_temp_path = str(pinned.display_path(temp_name))
+            if not tag_writer.write_and_verify(temp_path, _tags_for(release, track)):
                 plan.tag_verification_state = TagVerificationState.failed
                 raise ImportExecutionError("tag readback failed")
             plan.tag_verification_state = TagVerificationState.verified
             if before_commit is not None:
                 before_commit(destination)
+            pinned.verify_attached()
             if replace_existing_verified:
-                if not _path_exists(destination) or not _is_regular_non_symlink(destination):
+                if not pinned.is_regular_non_symlink():
                     raise ImportExecutionError("upgrade destination changed before atomic rename")
-                backup_fd, backup_name = tempfile.mkstemp(
-                    dir=destination.parent, prefix=f".{destination.name}.", suffix=".backup"
-                )
-                os.close(backup_fd)
-                backup = Path(backup_name)
-                _unlink_missing_ok(backup)
-                os.replace(destination, backup)
-                backup_paths[destination] = backup
-            elif _path_exists(destination):
+                backup_name = pinned.reserve_name(suffix=".backup")
+                pinned.replace(pinned.name, backup_name)
+                backup_paths.append((pinned, pinned.name, backup_name))
+            elif pinned.exists():
                 raise ImportExecutionError("destination appeared before atomic rename")
-            os.replace(temp, destination)
-            _fsync_directory(destination.parent)
-            temp_paths.remove(temp)
-            created_destinations.append(destination)
+            pinned.replace(temp_name, pinned.name)
+            pinned.fsync()
+            temp_paths.remove((pinned, temp_name))
+            created_destinations.append((pinned, pinned.name))
             track.import_state = ImportWorkflowState.imported
-            track.content_sha256 = _sha256(destination)
+            with pinned.open_read(pinned.name) as imported_file:
+                track.content_sha256 = _sha256_fileobj(imported_file)
             plan.status = ImportWorkflowState.imported
             plan.collision_state = CollisionState.clear
         release.import_state = ImportWorkflowState.imported
         await db.flush()
+
+        committed_destinations = tuple(created_destinations)
+        committed_backups = tuple(backup_paths)
+        pending_temps = tuple(temp_paths)
+        committed_handles = tuple(pinned_destinations)
+
+        def finalize_filesystem_commit() -> None:
+            try:
+                for pinned, _destination_name, backup_name in committed_backups:
+                    try:
+                        _unlink_backup_after_commit(pinned.proc_path(backup_name))
+                    except OSError:
+                        continue
+            finally:
+                _close_pinned_destinations(list(committed_handles))
+
+        def rollback_filesystem_commit() -> None:
+            try:
+                _rollback_pinned_filesystem(
+                    list(pending_temps),
+                    list(committed_destinations),
+                    list(committed_backups),
+                )
+            finally:
+                _close_pinned_destinations(list(committed_handles))
+
+        register_transaction_callbacks(
+            db,
+            after_commit=finalize_filesystem_commit,
+            after_rollback=rollback_filesystem_commit,
+        )
         return plans
     except Exception as exc:
-        for temp in temp_paths:
-            temp.unlink(missing_ok=True)
-        for destination in reversed(created_destinations):
-            destination.unlink(missing_ok=True)
-        for destination, backup in backup_paths.items():
-            if backup.exists():
-                destination.unlink(missing_ok=True)
-                os.replace(backup, destination)
-                _fsync_directory(destination.parent)
+        try:
+            _rollback_pinned_filesystem(temp_paths, created_destinations, backup_paths)
+        finally:
+            _close_pinned_destinations(pinned_destinations)
         detail = str(exc)
         release.import_state = ImportWorkflowState.rolled_back
         release.rollback_detail = detail
@@ -455,8 +502,7 @@ async def execute_release_import(
             elif plan.status == ImportWorkflowState.importing:
                 plan.status = ImportWorkflowState.failed
                 plan.error_detail = detail
-            if plan.destination_temp_path:
-                _unlink_missing_ok(Path(plan.destination_temp_path))
+            plan.destination_temp_path = None
         tracks_result = await db.execute(select(Track).where(Track.release_id == release.id))
         for track in tracks_result.scalars().all():
             if track.import_state == ImportWorkflowState.imported:
@@ -465,12 +511,3 @@ async def execute_release_import(
         if isinstance(exc, ImportExecutionError):
             raise
         raise ImportExecutionError(detail) from exc
-    finally:
-        if release.import_state == ImportWorkflowState.imported:
-            for backup in backup_paths.values():
-                try:
-                    _unlink_backup_after_commit(backup)
-                except OSError:
-                    # Replacement is already committed. A cleanup problem must never
-                    # enter rollback after any earlier backup has been removed.
-                    continue
