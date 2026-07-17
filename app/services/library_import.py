@@ -48,6 +48,10 @@ def _unlink_missing_ok(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
+def _unlink_backup_after_commit(path: Path) -> None:
+    path.unlink(missing_ok=True)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -241,6 +245,7 @@ async def plan_release_import(
     *,
     library_root: Path,
     naming_template: str = _DESTINATION_TEMPLATE,
+    source_artifacts: dict[int, tuple[Path, str]] | None = None,
 ) -> list[ImportPlan]:
     await db.execute(delete(ImportPlan).where(ImportPlan.release_id == release.id))
     await db.flush()
@@ -252,7 +257,10 @@ async def plan_release_import(
     library_root = _resolved_path(library_root)
     plans: list[ImportPlan] = []
     for track in tracks:
-        source = _track_source_path(track)
+        artifact = (
+            source_artifacts.get(track.id) if source_artifacts and track.id is not None else None
+        )
+        source = artifact[0] if artifact else _track_source_path(track)
         status = ImportWorkflowState.ready
         collision = CollisionState.clear
         error: str | None = None
@@ -271,6 +279,10 @@ async def plan_release_import(
         try:
             _ensure_regular_source(source)
             source_hash = _sha256(source)
+            if artifact is not None and source_hash != artifact[1]:
+                raise ImportPlanningError(
+                    f"candidate artifact hash does not match track {track.id}"
+                )
             relative = render_path(track, template=naming_template)
             destination = library_root / relative
             symlink_parent = _existing_parent_symlink(library_root, destination)
@@ -422,8 +434,6 @@ async def execute_release_import(
             plan.collision_state = CollisionState.clear
         release.import_state = ImportWorkflowState.imported
         await db.flush()
-        for backup in backup_paths.values():
-            backup.unlink(missing_ok=True)
         return plans
     except Exception as exc:
         for temp in temp_paths:
@@ -455,3 +465,12 @@ async def execute_release_import(
         if isinstance(exc, ImportExecutionError):
             raise
         raise ImportExecutionError(detail) from exc
+    finally:
+        if release.import_state == ImportWorkflowState.imported:
+            for backup in backup_paths.values():
+                try:
+                    _unlink_backup_after_commit(backup)
+                except OSError:
+                    # Replacement is already committed. A cleanup problem must never
+                    # enter rollback after any earlier backup has been removed.
+                    continue
