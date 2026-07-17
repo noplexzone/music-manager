@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -18,9 +18,10 @@ from app.database import get_db
 from app.models.auth import AppUser, AuthSession, UserRole
 
 _hasher = PasswordHasher()
-_attempts: dict[str, deque[float]] = defaultdict(deque)
+_attempts: OrderedDict[str, deque[float]] = OrderedDict()
 _WINDOW_SECONDS = 300
 _MAX_FAILURES = 5
+_MAX_ATTEMPT_KEYS = 10_000
 
 
 def hash_password(password: str) -> str:
@@ -49,17 +50,35 @@ def login_key(request: Request, username: str) -> str:
     return f"{host}:{username.casefold()}"
 
 
+def _cleanup_login_attempts(now: float) -> None:
+    cutoff = now - _WINDOW_SECONDS
+    for key, attempts in list(_attempts.items()):
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if not attempts:
+            _attempts.pop(key, None)
+
+
 def check_login_allowed(key: str) -> None:
     now = time.monotonic()
-    attempts = _attempts[key]
-    while attempts and attempts[0] <= now - _WINDOW_SECONDS:
-        attempts.popleft()
+    _cleanup_login_attempts(now)
+    attempts = _attempts.get(key, ())
     if len(attempts) >= _MAX_FAILURES:
         raise HTTPException(status_code=429, detail="Too many login attempts; try again later")
 
 
 def record_login_failure(key: str) -> None:
-    _attempts[key].append(time.monotonic())
+    now = time.monotonic()
+    _cleanup_login_attempts(now)
+    attempts = _attempts.get(key)
+    if attempts is None:
+        if len(_attempts) >= _MAX_ATTEMPT_KEYS:
+            _attempts.popitem(last=False)
+        attempts = deque()
+        _attempts[key] = attempts
+    else:
+        _attempts.move_to_end(key)
+    attempts.append(now)
 
 
 def clear_login_failures(key: str) -> None:

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from app.auth import get_current_user
 from app.config import Settings, get_settings
 from app.schemas.health import SourceStatus
 from app.schemas.search import SearchRequest, SearchResponse, SearchResult
@@ -17,7 +18,7 @@ from app.sources.slskd import SlskdAdapter
 from app.sources.tidal_status import TIDAL_STATUS
 from app.sources.youtube import ProviderError, YouTubeAdapter
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
 
 _VALID_SOURCES = {"slskd", "prowlarr", "youtube"}

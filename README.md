@@ -57,6 +57,12 @@ docker compose up -d
 
 The admin UI is served at `http://localhost:8000`.
 
+For this direct LAN HTTP setup, keep `AUTH_COOKIE_SECURE=false` as shown in
+`.env.example`; otherwise browsers will not return the session and CSRF cookies over
+HTTP. Set `AUTH_COOKIE_SECURE=true` whenever Music Manager is served behind HTTPS.
+`SESSION_TTL_SECONDS` controls session lifetime and defaults to 43,200 seconds
+(12 hours).
+
 ## Container image
 
 The release workflow publishes tagged builds to `noplexzone/music-manager` on Docker Hub after the quality gate passes. Until a tagged workflow has completed, build the image locally with:
