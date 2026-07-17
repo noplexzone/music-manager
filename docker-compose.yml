@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: music-manager:0.1.1
+    image: noplexzone/music-manager:0.1.1
     container_name: music-manager
     restart: unless-stopped
     ports:

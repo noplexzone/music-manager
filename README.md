@@ -65,10 +65,10 @@ HTTP. Set `AUTH_COOKIE_SECURE=true` whenever Music Manager is served behind HTTP
 
 ## Container image
 
-The release workflow publishes tagged builds to `noplexzone/music-manager` on Docker Hub after the quality gate passes. Until a tagged workflow has completed, build the image locally with:
+The release workflow publishes tagged builds to `noplexzone/music-manager` on Docker Hub after the quality gate passes. Pull v0.1.1 with:
 
 ```bash
-docker build -f docker/Dockerfile -t music-manager:0.1.1 .
+docker pull noplexzone/music-manager:0.1.1
 ```
 
 ## Continuous integration
@@ -77,4 +77,4 @@ Pull requests and pushes to `main` run pytest, Ruff lint and formatting checks, 
 
 ## Version
 
-v0.1.1 — Library automation foundation (staging and workflow state, no verified import execution yet)
+v0.1.1 — Authenticated staging, evidence-based matching, transactional import, monitoring, and provider hardening

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-17
+
 ### Added
 
 - First-run owner setup, Argon2 password hashing, expiring database sessions, CSRF protection, role-based mutation authorization, and login throttling.
@@ -56,5 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Hardened job source validation, Prowlarr NZB URL trust checks, YouTube search timeout behavior, Docker build context exclusions, and filename extension preservation
 
-[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/noplexzone/music-manager/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/noplexzone/music-manager/releases/tag/v0.1.0
