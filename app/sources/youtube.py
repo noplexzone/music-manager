@@ -246,7 +246,11 @@ class YouTubeAdapter:
         except (json.JSONDecodeError, UnicodeDecodeError):
             formats = []
         has_audio = any(
-            isinstance(item, dict) and item.get("acodec") not in {None, "none"} for item in formats
+            isinstance(item, dict)
+            and isinstance((codec := item.get("acodec")), str)
+            and bool(codec.strip())
+            and codec.strip().casefold() != "none"
+            for item in formats
         )
         details.update(
             code="ok" if has_audio else "format_unavailable",

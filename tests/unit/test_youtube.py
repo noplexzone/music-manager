@@ -77,18 +77,35 @@ class TestYouTubeHealth:
         assert state.extra["throttling"] == "rate_limited"
         assert "secret" not in (state.reason or "")
 
-    async def test_health_rejects_probe_without_audio_format(self) -> None:
+    @pytest.mark.parametrize(
+        ("codec", "expected_available"),
+        [
+            ("", False),
+            ("   ", False),
+            ("NoNe", False),
+            ("NONE", False),
+            (None, False),
+            (0, False),
+            (False, False),
+            ({"name": "opus"}, False),
+            (["opus"], False),
+            ("opus", True),
+        ],
+    )
+    async def test_health_requires_normalized_nonempty_audio_codec(
+        self, codec: object, expected_available: bool
+    ) -> None:
         process = MagicMock(returncode=0)
         process.communicate = AsyncMock(
-            return_value=(json.dumps({"formats": [{"acodec": "none"}]}).encode(), b"")
+            return_value=(json.dumps({"formats": [{"acodec": codec}]}).encode(), b"")
         )
         with (
             patch("app.sources.youtube._ytdlp_available", return_value=True),
             patch("app.sources.youtube.asyncio.create_subprocess_exec", return_value=process),
         ):
             state = await YouTubeAdapter().health()
-        assert state.available is False
-        assert state.extra["code"] == "format_unavailable"
+        assert state.available is expected_available
+        assert state.extra["code"] == ("ok" if expected_available else "format_unavailable")
 
     async def test_health_rejects_expired_cookies(self, tmp_path: Path) -> None:
         cookie_file = tmp_path / "cookies.txt"
