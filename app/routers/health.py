@@ -8,9 +8,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.database import get_db
 from app.schemas.health import HealthResponse, SourceStatus
+from app.settings_service import effective_settings_dep
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
@@ -43,7 +44,7 @@ async def _check_db(db: AsyncSession) -> bool:
 
 @router.get("/health", response_model=HealthResponse)
 async def health(
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> HealthResponse:
     adapters = _build_adapters(settings)
@@ -85,7 +86,8 @@ async def health(
 
 @router.get("/health/sources", response_model=dict[str, SourceStatus])
 async def health_sources(
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, SourceStatus]:
     adapters = _build_adapters(settings)
 

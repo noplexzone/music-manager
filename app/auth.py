@@ -160,9 +160,19 @@ async def require_mutation(
     return user
 
 
-async def require_admin(
-    user: Annotated[AppUser, Depends(require_mutation)],
-) -> AppUser:
+def _ensure_admin(user: AppUser) -> AppUser:
     if user.role not in {UserRole.owner, UserRole.admin}:
         raise HTTPException(status_code=403, detail="Administrator role required")
     return user
+
+
+async def require_admin_read(
+    user: Annotated[AppUser, Depends(get_current_user)],
+) -> AppUser:
+    return _ensure_admin(user)
+
+
+async def require_admin(
+    user: Annotated[AppUser, Depends(require_mutation)],
+) -> AppUser:
+    return _ensure_admin(user)

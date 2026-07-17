@@ -22,6 +22,7 @@ from app.models.track import FingerprintState, IdentityResolutionState, Track
 from app.models.workflow import AcquisitionState
 from app.naming.convention import NamingError, render_path
 from app.schemas.search import SearchRequest, SearchResult
+from app.settings_service import build_effective_settings
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
@@ -38,10 +39,10 @@ def _now() -> datetime:
 async def run_job(
     job_id: int, db: AsyncSession | None = None, settings: Settings | None = None
 ) -> None:
-    cfg = settings or get_settings()
     if db is None:
         factory = get_session_factory()
         async with factory() as session:
+            cfg = settings or await build_effective_settings(session, get_settings())
             try:
                 await _run_job_in_session(job_id, session, cfg)
                 await session.commit()
@@ -53,6 +54,7 @@ async def run_job(
                 raise
         return
 
+    cfg = settings or await build_effective_settings(db, get_settings())
     await _run_job_in_session(job_id, db, cfg)
 
 

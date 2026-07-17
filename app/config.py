@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     # MusicBrainz
     musicbrainz_app_name: str = "music-manager"
-    musicbrainz_app_version: str = "0.1.2"
+    musicbrainz_app_version: str = "0.2.0"
     musicbrainz_contact: str = ""
 
     # Deezer
@@ -56,6 +56,11 @@ class Settings(BaseSettings):
 
     # AcoustID
     acoustid_api_key: str = ""
+
+    # TIDAL (reserved — not yet available; stored for future use)
+    tidal_config_path: str = ""
+    tidal_session_path: str = ""
+    tidal_quality: Literal["", "Normal", "High", "HiFi", "Master"] = ""
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

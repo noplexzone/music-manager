@@ -18,6 +18,7 @@
       <a href="/search" {% if request.url.path.startswith("/search") %}class="active"{% endif %}>Search</a>
       <a href="/jobs/ui/list" {% if request.url.path.startswith("/jobs") %}class="active"{% endif %}>Jobs</a>
       <a href="/imports/ui/review" {% if request.url.path.startswith("/imports") %}class="active"{% endif %}>Imports</a>
+      <a href="/settings" {% if request.url.path.startswith("/settings") %}class="active"{% endif %}>Settings</a>
       <a href="/api/docs" target="_blank">API</a>
     </nav>
   </header>
@@ -31,13 +32,14 @@
   </main>
 
   <footer>
-    Music Manager v0.1.2 &mdash; private, self-hosted
+    Music Manager v0.2.0 &mdash; private, self-hosted
   </footer>
 </div>
 <script>
 document.addEventListener("submit", async (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement) || form.method.toLowerCase() !== "post") return;
+  if (form.dataset.customSubmit === "true") return;
   event.preventDefault();
   const csrf = document.cookie.split("; ").find((part) => part.startsWith("csrf="))?.split("=")[1];
   const headers = csrf ? {"X-CSRF-Token": decodeURIComponent(csrf)} : {};

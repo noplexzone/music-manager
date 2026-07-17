@@ -284,3 +284,23 @@ async def test_musicbrainz_empty_result_marks_track_unresolved(
 
     assert track.mbid is None
     assert track.identity_state == IdentityResolutionState.unresolved
+
+
+async def test_run_job_uses_database_backed_effective_settings(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = await _create_job(db_session)
+    expected = Settings(secret_key="effective-secret", slskd_url="http://db-slskd")
+    observed: list[Settings] = []
+
+    async def _effective(db: AsyncSession, env: Settings) -> Settings:
+        assert db is db_session
+        return expected
+
+    async def _run(job_id: int, db: AsyncSession, cfg: Settings) -> None:
+        observed.append(cfg)
+
+    monkeypatch.setattr(runner, "build_effective_settings", _effective)
+    monkeypatch.setattr(runner, "_run_job_in_session", _run)
+    await runner.run_job(job.id, db_session)
+    assert observed == [expected]

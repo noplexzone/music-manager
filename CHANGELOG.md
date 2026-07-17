@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added encrypted database-backed provider and library settings with environment precedence, masked secret responses, separate connection tests, and authenticated save APIs.
+- Extended first-run setup to configure acquisition, metadata, TIDAL, and library sources without requiring them to be present.
+- Added an operator Settings page with explicit provider health checks and persistent source configuration.
+
+### Security
+
+- Provider secrets are encrypted at rest and never returned to clients; settings mutations require owner/admin authorization and CSRF validation.
+
 ## [0.1.2] - 2026-07-17
 
 ### Fixed

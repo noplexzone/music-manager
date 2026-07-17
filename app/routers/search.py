@@ -9,9 +9,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.auth import get_current_user
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.schemas.health import SourceStatus
 from app.schemas.search import SearchRequest, SearchResponse, SearchResult
+from app.settings_service import effective_settings_dep
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.slskd import SlskdAdapter
@@ -77,7 +78,7 @@ async def _search_source(
 @router.post("/search", response_model=SearchResponse)
 async def search(
     req: SearchRequest,
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
 ) -> SearchResponse:
     if req.sources == []:
         requested = sorted(_VALID_SOURCES)
@@ -117,7 +118,7 @@ async def search_page(request: Request) -> HTMLResponse:
 @router.post("/search/ui", response_class=HTMLResponse)
 async def search_ui(
     request: Request,
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
 ) -> HTMLResponse:
     templates = _get_templates(request)
     form = await request.form()

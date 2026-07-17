@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Settings — Music Manager{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="hint">Environment variables take precedence and are locked. Leave a secret field blank to keep the existing value.</p>
+
+<form id="settings-form" method="post" action="/api/settings/save" data-custom-submit="true">
+
+<section class="card">
+  <h2>slskd (Soulseek)</h2>
+  <label>URL
+    <input name="slskd_url" value="{{ settings.slskd_url.value }}"
+      {% if settings.slskd_url.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.slskd_url.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <label>API Key
+    <input name="slskd_api_key" type="password"
+      placeholder="{% if settings.slskd_api_key.configured %}(configured){% else %}not set{% endif %}"
+      {% if settings.slskd_api_key.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.slskd_api_key.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <button type="button" class="secondary" data-test-provider="slskd">Test connection</button>
+  <span class="test-result" id="test-slskd"></span>
+</section>
+
+<section class="card">
+  <h2>Prowlarr</h2>
+  <label>URL
+    <input name="prowlarr_url" value="{{ settings.prowlarr_url.value }}"
+      {% if settings.prowlarr_url.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.prowlarr_url.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <label>API Key
+    <input name="prowlarr_api_key" type="password"
+      placeholder="{% if settings.prowlarr_api_key.configured %}(configured){% else %}not set{% endif %}"
+      {% if settings.prowlarr_api_key.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.prowlarr_api_key.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <button type="button" class="secondary" data-test-provider="prowlarr">Test connection</button>
+  <span class="test-result" id="test-prowlarr"></span>
+</section>
+
+<section class="card">
+  <h2>SABnzbd</h2>
+  <label>URL
+    <input name="sabnzbd_url" value="{{ settings.sabnzbd_url.value }}"
+      {% if settings.sabnzbd_url.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.sabnzbd_url.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <label>API Key
+    <input name="sabnzbd_api_key" type="password"
+      placeholder="{% if settings.sabnzbd_api_key.configured %}(configured){% else %}not set{% endif %}"
+      {% if settings.sabnzbd_api_key.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.sabnzbd_api_key.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <button type="button" class="secondary" data-test-provider="sabnzbd">Test connection</button>
+  <span class="test-result" id="test-sabnzbd"></span>
+</section>
+
+<section class="card">
+  <h2>YouTube / yt-dlp</h2>
+  <label>Cookies file path
+    <input name="ytdlp_cookies_file" value="{{ settings.ytdlp_cookies_file.value }}"
+      {% if settings.ytdlp_cookies_file.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.ytdlp_cookies_file.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <button type="button" class="secondary" data-test-provider="youtube">Test connection</button>
+  <span class="test-result" id="test-youtube"></span>
+</section>
+
+<section class="card">
+  <h2>TIDAL / tidal-dl</h2>
+  <p class="hint">Authentication files are stored on the persistent data mount. TIDAL acquisition is enabled in the next provider slice.</p>
+  <label>Config path
+    <input name="tidal_config_path" value="{{ settings.tidal_config_path.value }}"
+      {% if settings.tidal_config_path.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+  </label>
+  <label>Session path
+    <input name="tidal_session_path" value="{{ settings.tidal_session_path.value }}"
+      {% if settings.tidal_session_path.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+  </label>
+  <label>Quality
+    <select name="tidal_quality" {% if settings.tidal_quality.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+      <option value="" {% if not settings.tidal_quality.value %}selected{% endif %}>Default</option>
+      {% for quality in ["Normal", "High", "HiFi", "Master"] %}
+      <option value="{{ quality }}" {% if settings.tidal_quality.value == quality %}selected{% endif %}>{{ quality }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</section>
+
+<section class="card">
+  <h2>Metadata</h2>
+  <label>MusicBrainz contact email
+    <input name="musicbrainz_contact" value="{{ settings.musicbrainz_contact.value }}"
+      {% if settings.musicbrainz_contact.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.musicbrainz_contact.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <label>AcoustID API key
+    <input name="acoustid_api_key" type="password"
+      placeholder="{% if settings.acoustid_api_key.configured %}(configured){% else %}not set{% endif %}"
+      {% if settings.acoustid_api_key.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.acoustid_api_key.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+</section>
+
+<section class="card">
+  <h2>Library</h2>
+  <label>Library root
+    <input name="library_root" value="{{ settings.library_root.value }}"
+      {% if settings.library_root.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.library_root.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <label>Staging root
+    <input name="staging_root" value="{{ settings.staging_root.value }}"
+      {% if settings.staging_root.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.staging_root.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+  <label>Naming template
+    <input name="naming_template" value="{{ settings.naming_template.value }}"
+      {% if settings.naming_template.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
+    {% if settings.naming_template.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
+  </label>
+</section>
+
+<button type="submit">Save settings</button>
+<span id="settings-save-result" class="test-result" role="status"></span>
+</form>
+
+<script>
+const settingsForm = document.getElementById("settings-form");
+settingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const resultEl = document.getElementById("settings-save-result");
+  resultEl.textContent = "Saving…";
+  const csrf = document.cookie.split("; ").find((p) => p.startsWith("csrf="))?.split("=")[1];
+  const data = Object.fromEntries(new FormData(settingsForm));
+  try {
+    const response = await fetch(settingsForm.action, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": decodeURIComponent(csrf || "")},
+      body: JSON.stringify(data),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : "Save failed");
+    resultEl.textContent = "✓ Settings saved";
+    resultEl.className = "test-result ok";
+  } catch (error) {
+    resultEl.textContent = "✗ " + (error instanceof Error ? error.message : "Save failed");
+    resultEl.className = "test-result err";
+  }
+});
+
+document.querySelectorAll("[data-test-provider]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const provider = btn.dataset.testProvider;
+    const resultEl = document.getElementById("test-" + provider);
+    resultEl.textContent = "Testing…";
+    const csrf = document.cookie.split("; ").find((p) => p.startsWith("csrf="))?.split("=")[1];
+    const form = btn.closest("form");
+    const formData = new FormData(form);
+    const body = {provider};
+    const fieldMap = {
+      slskd: ["slskd_url", "slskd_api_key"],
+      prowlarr: ["prowlarr_url", "prowlarr_api_key"],
+      sabnzbd: ["sabnzbd_url", "sabnzbd_api_key"],
+      youtube: ["ytdlp_cookies_file"],
+    };
+    (fieldMap[provider] || []).forEach((f) => { body[f] = formData.get(f) || ""; });
+    try {
+      const resp = await fetch("/api/settings/test", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRF-Token": decodeURIComponent(csrf || "")},
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      resultEl.textContent = data.available ? "✓ Connected" : "✗ " + (data.reason || "Failed");
+      resultEl.className = "test-result " + (data.available ? "ok" : "err");
+    } catch {
+      resultEl.textContent = "✗ Request failed";
+      resultEl.className = "test-result err";
+    }
+  });
+});
+</script>
+{% endblock %}

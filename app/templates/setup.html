@@ -1,9 +1,99 @@
 {% extends "base.html" %}
 {% block title %}First-run setup — Music Manager{% endblock %}
 {% block content %}
-<section class="card"><h1>Create owner account</h1><p>This one-time setup creates the first owner.</p>
-<form method="post" action="/api/auth/setup">
-<label>Username <input name="username" required maxlength="64" autocomplete="username"></label>
-<label>Password <input name="password" type="password" required minlength="14" autocomplete="new-password"></label>
-<button type="submit">Create owner</button></form></section>
+<section class="card">
+  <h1>Create owner account</h1>
+  <p>This one-time setup creates the first owner. Provider settings are optional — you can configure them later in Settings.</p>
+  <form id="setup-form" method="post" action="/api/auth/setup" data-custom-submit="true">
+    <label>Username <input name="username" required maxlength="64" autocomplete="username"></label>
+    <label>Password <input name="password" type="password" required minlength="14" autocomplete="new-password"></label>
+
+    <details>
+      <summary>Configure providers (optional)</summary>
+
+      <fieldset>
+        <legend>slskd (Soulseek)</legend>
+        <label>URL <input name="slskd_url" placeholder="http://slskd:5030"></label>
+        <label>API Key <input name="slskd_api_key" type="password"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Prowlarr</legend>
+        <label>URL <input name="prowlarr_url" placeholder="http://prowlarr:9696"></label>
+        <label>API Key <input name="prowlarr_api_key" type="password"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>SABnzbd</legend>
+        <label>URL <input name="sabnzbd_url" placeholder="http://sabnzbd:8080"></label>
+        <label>API Key <input name="sabnzbd_api_key" type="password"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>YouTube / yt-dlp</legend>
+        <label>Cookies file <input name="ytdlp_cookies_file" placeholder="/data/cookies.txt"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>TIDAL / tidal-dl</legend>
+        <label>Profile path <input name="tidal_config_path" placeholder="/data/tidal/.tidal-dl.json"></label>
+        <label>Session token path <input name="tidal_session_path" placeholder="/data/tidal/.tidal-dl.token.json"></label>
+        <label>Quality
+          <select name="tidal_quality">
+            <option value="">Default</option>
+            <option value="Normal">Normal</option>
+            <option value="High">High</option>
+            <option value="HiFi">HiFi</option>
+            <option value="Master">Master</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Metadata</legend>
+        <label>MusicBrainz contact email <input name="musicbrainz_contact" type="email"></label>
+        <label>AcoustID API key <input name="acoustid_api_key" type="password"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Library</legend>
+        <label>Library root <input name="library_root" placeholder="/music"></label>
+        <label>Staging root <input name="staging_root" placeholder="/staging/music-manager"></label>
+        <label>Naming template <input name="naming_template" placeholder="{album_artist}/{year} - {album}/{disc_track} - {title}.{ext}"></label>
+      </fieldset>
+    </details>
+
+    <button type="submit">Create owner &amp; continue</button>
+  </form>
+</section>
+<script>
+document.getElementById("setup-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const data = Object.fromEntries(new FormData(form));
+  const credentials = {username: data.username, password: data.password};
+  const providerFields = [
+    "slskd_url","slskd_api_key","prowlarr_url","prowlarr_api_key",
+    "sabnzbd_url","sabnzbd_api_key","ytdlp_cookies_file",
+    "tidal_config_path","tidal_session_path","tidal_quality",
+    "musicbrainz_contact","acoustid_api_key","library_root","staging_root","naming_template",
+  ];
+  const providerSettings = {};
+  providerFields.forEach((f) => { if (data[f]) providerSettings[f] = data[f]; });
+  const payload = Object.keys(providerSettings).length
+    ? {...credentials, provider_settings: providerSettings}
+    : credentials;
+  const response = await fetch("/api/auth/setup", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    window.alert(err.detail || "Setup failed");
+    return;
+  }
+  window.location.assign("/");
+});
+</script>
 {% endblock %}

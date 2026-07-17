@@ -29,6 +29,8 @@ from app.auth import (
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.auth import AppUser, AuthSession, UserRole
+from app.schemas.settings import SettingsSaveRequest
+from app.settings_service import save_settings
 
 router = APIRouter()
 _setup_owner_lock = asyncio.Lock()
@@ -39,8 +41,30 @@ class Credentials(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class SetupPayload(Credentials):
+    provider_settings: SettingsSaveRequest | None = None
+
+
 class UserCreate(Credentials):
     role: Literal["admin", "member", "viewer"] = "member"
+
+
+def _validate_setup_provider_pairs(provider_settings: SettingsSaveRequest | None) -> None:
+    if provider_settings is None:
+        return
+    values = provider_settings.model_dump(exclude_unset=True)
+    for provider, url_key, secret_key in (
+        ("slskd", "slskd_url", "slskd_api_key"),
+        ("prowlarr", "prowlarr_url", "prowlarr_api_key"),
+        ("sabnzbd", "sabnzbd_url", "sabnzbd_api_key"),
+    ):
+        url = values.get(url_key)
+        secret = values.get(secret_key)
+        if bool(url) != bool(secret):
+            raise HTTPException(
+                status_code=422,
+                detail={"validation_errors": {provider: "URL and API key are required together"}},
+            )
 
 
 def _set_auth_cookies(
@@ -87,7 +111,7 @@ async def login_page(
 
 @router.post("/api/auth/setup", status_code=201)
 async def setup_owner(
-    payload: Credentials,
+    payload: SetupPayload,
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -95,6 +119,7 @@ async def setup_owner(
     if await setup_complete(db):
         raise HTTPException(status_code=409, detail="Setup is already complete")
     validate_password(payload.password)
+    _validate_setup_provider_pairs(payload.provider_settings)
     password_hash = hash_password(payload.password)
     async with _setup_owner_lock:
         # Refresh the preflight transaction after waiting for another local claimant.
@@ -111,6 +136,8 @@ async def setup_owner(
         try:
             await db.flush()
             token, session = await create_session(db, user, settings)
+            if payload.provider_settings is not None:
+                await save_settings(db, payload.provider_settings.model_dump(), settings)
             await db.commit()
         except IntegrityError as exc:
             await db.rollback()
