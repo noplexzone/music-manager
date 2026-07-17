@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Import execution now rejects post-plan symlink source swaps and only marks supported formats tag-verified after Mutagen readback.
 - Import execution now rejects post-plan symlink swaps in every staged source path component.
 - Monitoring upgrades now require the approved selected release candidate, verify candidate-bound track artifacts and hashes, and isolate post-commit backup cleanup from rollback.
+- YouTube search now uses a bounded, cancellable yt-dlp subprocess with sanitized structured failures and truthful cookie/version health details; TIDAL reports exact lawful backend prerequisites while remaining unavailable.
 
 ## [0.1.0] - 2026-07-16
 

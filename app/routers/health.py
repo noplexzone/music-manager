@@ -20,7 +20,23 @@ from app.sources.youtube import YouTubeAdapter
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_TIDAL_STATUS = SourceStatus(available=False, reason="unavailable in v0.1.1")
+_TIDAL_REASON = (
+    "TIDAL acquisition unavailable: no supported lawful authenticated external downloader is "
+    "configured; requires an operator-provided backend authorized for permanent local downloads "
+    "with health, search, enqueue, status, cancellation, staging, and provenance support."
+)
+_TIDAL_STATUS = SourceStatus(
+    available=False,
+    reason=_TIDAL_REASON,
+    details={
+        "code": "backend_not_configured",
+        "prerequisites": [
+            "operator-confirmed rights for permanent local downloads",
+            "authenticated live health and version negotiation",
+            "search, enqueue, status, cancellation, staging, and provenance capabilities",
+        ],
+    },
+)
 
 
 def _build_adapters(settings: Settings) -> dict[str, SourceAdapter]:
@@ -57,9 +73,15 @@ async def health(
     sources: dict[str, SourceStatus] = {}
     for name, result in zip(adapters.keys(), checks, strict=True):
         if isinstance(result, BaseException):
-            sources[name] = SourceStatus(available=False, reason=str(result))
+            sources[name] = SourceStatus(
+                available=False,
+                reason="Source health check failed",
+                details={"code": "health_check_failed"},
+            )
         else:
-            sources[name] = SourceStatus(available=result.available, reason=result.reason)
+            sources[name] = SourceStatus(
+                available=result.available, reason=result.reason, details=result.extra
+            )
 
     sources["tidal"] = _TIDAL_STATUS
 
@@ -92,9 +114,15 @@ async def health_sources(
     sources: dict[str, SourceStatus] = {}
     for name, result in zip(adapters.keys(), checks, strict=True):
         if isinstance(result, BaseException):
-            sources[name] = SourceStatus(available=False, reason=str(result))
+            sources[name] = SourceStatus(
+                available=False,
+                reason="Source health check failed",
+                details={"code": "health_check_failed"},
+            )
         else:
-            sources[name] = SourceStatus(available=result.available, reason=result.reason)
+            sources[name] = SourceStatus(
+                available=result.available, reason=result.reason, details=result.extra
+            )
 
     sources["tidal"] = _TIDAL_STATUS
     return sources

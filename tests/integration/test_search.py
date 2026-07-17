@@ -24,6 +24,14 @@ async def test_search_with_unknown_source_excluded(client: AsyncClient) -> None:
     assert data["results"] == []
 
 
+async def test_explicit_tidal_search_reports_unavailable(client: AsyncClient) -> None:
+    resp = await client.post("/search", json={"query": "test", "sources": ["tidal"]})
+    assert resp.status_code == 200
+    state = resp.json()["source_states"]["tidal"]
+    assert state["available"] is False
+    assert state["details"]["code"] == "backend_not_configured"
+
+
 async def test_search_unconfigured_sources_gracefully_degrade(client: AsyncClient) -> None:
     resp = await client.post(
         "/search",

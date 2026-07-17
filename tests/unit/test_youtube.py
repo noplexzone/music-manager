@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+import json
+import signal
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.schemas.search import SearchRequest
-from app.sources.youtube import YouTubeAdapter
+from app.sources.youtube import ProviderError, YouTubeAdapter
 
 
 class TestYouTubeHealth:
@@ -20,6 +25,29 @@ class TestYouTubeHealth:
             state = await adapter.health()
         assert state.available is False
         assert "yt-dlp" in (state.reason or "")
+
+    async def test_health_reports_version_and_unconfigured_cookies(self) -> None:
+        with (
+            patch("app.sources.youtube._ytdlp_available", return_value=True),
+            patch("app.sources.youtube._ytdlp_version", return_value="2026.7.1"),
+        ):
+            state = await YouTubeAdapter().health()
+        assert state.extra == {
+            "code": "ok",
+            "version": "2026.7.1",
+            "cookies": "not_configured",
+            "auth": "not_probed",
+        }
+
+    async def test_health_rejects_missing_cookie_file_without_exposing_path(
+        self, tmp_path: Path
+    ) -> None:
+        secret_path = tmp_path / "secret-cookies.txt"
+        with patch("app.sources.youtube._ytdlp_available", return_value=True):
+            state = await YouTubeAdapter(str(secret_path)).health()
+        assert state.available is False
+        assert state.extra["code"] == "cookies_missing"
+        assert str(secret_path) not in (state.reason or "")
 
 
 class TestYouTubeSearch:
@@ -38,14 +66,12 @@ class TestYouTubeSearch:
                 }
             ]
         }
-        mock_ydl = MagicMock()
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mock_ydl.extract_info = MagicMock(return_value=mock_info)
+        process = MagicMock(pid=123, returncode=0)
+        process.communicate = AsyncMock(return_value=(json.dumps(mock_info).encode(), b""))
 
         with (
             patch("app.sources.youtube._ytdlp_available", return_value=True),
-            patch("yt_dlp.YoutubeDL", return_value=mock_ydl),
+            patch("app.sources.youtube.asyncio.create_subprocess_exec", return_value=process),
         ):
             adapter = YouTubeAdapter()
             results = await adapter.search(SearchRequest(query="Never Gonna Give You Up"))
@@ -55,55 +81,66 @@ class TestYouTubeSearch:
         assert results[0].duration_sec == 213
         assert results[0].title is not None
 
-    async def test_search_empty_when_ytdlp_missing(self) -> None:
+    async def test_search_fails_when_ytdlp_missing(self) -> None:
         with patch("app.sources.youtube._ytdlp_available", return_value=False):
             adapter = YouTubeAdapter()
-            results = await adapter.search(SearchRequest(query="test"))
-        assert results == []
+            with pytest.raises(ProviderError, match="yt-dlp is not installed") as caught:
+                await adapter.search(SearchRequest(query="test"))
+        assert caught.value.code == "ytdlp_missing"
 
-    async def test_search_returns_empty_on_exception(self) -> None:
-        mock_ydl = MagicMock()
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mock_ydl.extract_info = MagicMock(side_effect=Exception("network error"))
-
+    async def test_search_runs_ytdlp_as_bounded_subprocess(self) -> None:
+        process = MagicMock(pid=123)
+        process.communicate = AsyncMock(return_value=(json.dumps({"entries": []}).encode(), b""))
+        process.returncode = 0
         with (
             patch("app.sources.youtube._ytdlp_available", return_value=True),
-            patch("yt_dlp.YoutubeDL", return_value=mock_ydl),
+            patch(
+                "app.sources.youtube.asyncio.create_subprocess_exec", return_value=process
+            ) as spawn,
         ):
-            adapter = YouTubeAdapter()
-            results = await adapter.search(SearchRequest(query="test"))
+            results = await YouTubeAdapter().search(SearchRequest(query="test"))
 
         assert results == []
+        assert spawn.call_args.kwargs["start_new_session"] is True
+        assert "ytsearch20:test" in spawn.call_args.args
 
-    async def test_search_runs_ytdlp_in_worker_thread(self) -> None:
-        mock_info: dict[str, object] = {"entries": []}
-        calls: list[str] = []
-
-        async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
-            calls.append(getattr(func, "__name__", repr(func)))
-            return mock_info
-
+    async def test_search_kills_and_reaps_subprocess_on_timeout(self) -> None:
+        process = MagicMock(pid=123, returncode=None)
+        process.communicate = AsyncMock(side_effect=[asyncio.TimeoutError, (b"", b"")])
         with (
             patch("app.sources.youtube._ytdlp_available", return_value=True),
-            patch("app.sources.youtube.asyncio.to_thread", side_effect=fake_to_thread),
-        ):
-            adapter = YouTubeAdapter(search_timeout_sec=5.0)
-            results = await adapter.search(SearchRequest(query="test"))
-
-        assert results == []
-        assert calls == ["_extract_info"]
-
-    async def test_search_returns_empty_when_ytdlp_exceeds_timeout(self) -> None:
-        async def slow_to_thread(func: object, *args: object, **kwargs: object) -> object:
-            await asyncio.sleep(1)
-            return {"entries": []}
-
-        with (
-            patch("app.sources.youtube._ytdlp_available", return_value=True),
-            patch("app.sources.youtube.asyncio.to_thread", side_effect=slow_to_thread),
+            patch("app.sources.youtube.asyncio.create_subprocess_exec", return_value=process),
+            patch("app.sources.youtube.os.killpg") as killpg,
         ):
             adapter = YouTubeAdapter(search_timeout_sec=0.01)
-            results = await adapter.search(SearchRequest(query="test"))
+            with pytest.raises(ProviderError) as caught:
+                await adapter.search(SearchRequest(query="test"))
+        assert caught.value.code == "timeout"
+        killpg.assert_called_once_with(123, signal.SIGTERM)
+        assert process.communicate.await_count == 2
 
-        assert results == []
+    async def test_search_kills_and_reaps_subprocess_on_cancellation(self) -> None:
+        process = MagicMock(pid=456, returncode=None)
+        process.communicate = AsyncMock(side_effect=[asyncio.CancelledError, (b"", b"")])
+        with (
+            patch("app.sources.youtube._ytdlp_available", return_value=True),
+            patch("app.sources.youtube.asyncio.create_subprocess_exec", return_value=process),
+            patch("app.sources.youtube.os.killpg") as killpg,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await YouTubeAdapter().search(SearchRequest(query="test"))
+        killpg.assert_called_once_with(456, signal.SIGTERM)
+        assert process.communicate.await_count == 2
+
+    async def test_search_sanitizes_extractor_failure(self) -> None:
+        process = MagicMock(pid=123, returncode=1)
+        secret = b"ERROR /private/cookies.txt token=secret\nHTTP Error 429"
+        process.communicate = AsyncMock(return_value=(b"", secret))
+        with (
+            patch("app.sources.youtube._ytdlp_available", return_value=True),
+            patch("app.sources.youtube.asyncio.create_subprocess_exec", return_value=process),
+            pytest.raises(ProviderError) as caught,
+        ):
+            await YouTubeAdapter().search(SearchRequest(query="test"))
+        assert caught.value.code == "rate_limited"
+        assert "secret" not in caught.value.message

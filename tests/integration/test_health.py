@@ -23,7 +23,8 @@ async def test_health_tidal_always_unavailable(client: AsyncClient) -> None:
     assert "tidal" in data["sources"]
     tidal = data["sources"]["tidal"]
     assert tidal["available"] is False
-    assert "v0.1.1" in tidal["reason"]
+    assert tidal["details"]["code"] == "backend_not_configured"
+    assert "lawful authenticated external downloader" in tidal["reason"]
 
 
 async def test_health_sources_endpoint(client: AsyncClient) -> None:
