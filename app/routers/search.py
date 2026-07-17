@@ -8,15 +8,17 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from app.auth import get_current_user
 from app.config import Settings, get_settings
 from app.schemas.health import SourceStatus
 from app.schemas.search import SearchRequest, SearchResponse, SearchResult
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.slskd import SlskdAdapter
-from app.sources.youtube import YouTubeAdapter
+from app.sources.tidal_status import TIDAL_STATUS
+from app.sources.youtube import ProviderError, YouTubeAdapter
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
 
 _VALID_SOURCES = {"slskd", "prowlarr", "youtube"}
@@ -41,18 +43,35 @@ async def _search_source(
 ) -> tuple[str, list[SearchResult], SourceStatus]:
     adapter = _build_adapter(name, settings)
     if adapter is None:
-        return name, [], SourceStatus(available=False, reason=f"unknown source: {name}")
+        return (
+            name,
+            [],
+            SourceStatus(
+                available=False, reason="Unknown source", details={"code": "unknown_source"}
+            ),
+        )
 
     cap = await adapter.health()
     if not cap.available:
-        return name, [], SourceStatus(available=False, reason=cap.reason)
+        return name, [], SourceStatus(available=False, reason=cap.reason, details=cap.extra)
 
     try:
         results = await adapter.search(query)
         return name, results, SourceStatus(available=True)
-    except Exception as exc:
-        logger.warning("Search on %s failed: %s", name, exc)
-        return name, [], SourceStatus(available=False, reason=str(exc))
+    except ProviderError as exc:
+        logger.warning("Search on %s failed with code %s", name, exc.code)
+        return name, [], SourceStatus(available=False, reason=exc.message, details=exc.details())
+    except Exception:
+        logger.warning("Search on %s failed", name)
+        return (
+            name,
+            [],
+            SourceStatus(
+                available=False,
+                reason="Source search failed",
+                details={"code": "search_failed", "operation": "search", "retryable": True},
+            ),
+        )
 
 
 @router.post("/search", response_model=SearchResponse)
@@ -64,16 +83,19 @@ async def search(
         requested = sorted(_VALID_SOURCES)
     else:
         requested = [s for s in req.sources if s in _VALID_SOURCES]
+    tidal_requested = "tidal" in req.sources
 
     tasks = [_search_source(name, settings, req) for name in requested]
     outcomes = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_results: list[SearchResult] = []
     source_states: dict[str, SourceStatus] = {}
+    if tidal_requested:
+        source_states["tidal"] = TIDAL_STATUS
 
     for outcome in outcomes:
         if isinstance(outcome, BaseException):
-            logger.warning("Search task raised: %s", outcome)
+            logger.warning("Search task failed")
             continue
         name, results, state = outcome
         all_results.extend(results)

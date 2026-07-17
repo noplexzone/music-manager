@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "music-manager"
-version = "0.1.0"
+version = "0.1.1"
 description = "Self-hosted music acquisition, metadata enrichment, and library naming"
 requires-python = ">=3.12"
 dependencies = [
@@ -20,6 +20,8 @@ dependencies = [
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
     "tenacity>=8.3",
+    "mutagen>=1.47",
+    "argon2-cffi>=23.1",
 ]
 
 [project.optional-dependencies]
@@ -33,12 +35,20 @@ dev = [
     "mypy>=1.10",
 ]
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
 
+[tool.setuptools.package-data]
+app = ["templates/*.html", "static/css/*.css"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 

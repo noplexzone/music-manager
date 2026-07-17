@@ -1,0 +1,524 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import shutil
+import stat
+from collections.abc import Callable
+from pathlib import Path
+from typing import BinaryIO, no_type_check
+
+from mutagen.flac import FLAC
+from mutagen.id3 import ID3, TALB, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import register_transaction_callbacks
+from app.models.import_plan import CollisionState, ImportPlan, TagVerificationState
+from app.models.release import Release
+from app.models.track import Track
+from app.models.workflow import ImportWorkflowState
+from app.naming.convention import NamingError, render_path
+from app.services.pinned_destination import PinnedDestination
+
+logger = logging.getLogger(__name__)
+
+_DESTINATION_TEMPLATE = "{album_artist}/{year} - {album}/{disc_track} - {title}.{ext}"
+
+
+class ImportPlanningError(ValueError):
+    pass
+
+
+class ImportExecutionError(RuntimeError):
+    pass
+
+
+def _resolved_path(path: Path) -> Path:
+    return path.resolve()
+
+
+def _path_exists(path: Path) -> bool:
+    return path.exists()
+
+
+def _is_regular_non_symlink(path: Path) -> bool:
+    return not path.is_symlink() and path.is_file()
+
+
+def _unlink_missing_ok(path: Path) -> None:
+    path.unlink(missing_ok=True)
+
+
+def _unlink_backup_after_commit(path: Path) -> None:
+    path.unlink(missing_ok=True)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_fileobj(handle: BinaryIO) -> str:
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _open_regular_source_no_follow(path: Path) -> int:
+    absolute = path.absolute()
+    parts = absolute.parts
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_fd: int | None = None
+    try:
+        directory_fd = os.open(absolute.anchor, directory_flags)
+        for part in parts[1:-1]:
+            next_fd = os.open(part, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        fd = os.open(parts[-1], file_flags, dir_fd=directory_fd)
+    except OSError as exc:
+        raise ImportExecutionError("source path is not a regular non-symlink file") from exc
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ImportExecutionError("source path is not a regular non-symlink file")
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _sha256_regular_source_no_follow(path: Path) -> str:
+    with os.fdopen(_open_regular_source_no_follow(path), "rb") as handle:
+        return _sha256_fileobj(handle)
+
+
+def _fsync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _ensure_regular_source(path: Path) -> None:
+    if path.is_symlink():
+        raise ImportPlanningError("source path is a symlink")
+    if not path.is_file():
+        raise ImportPlanningError("source path is not a regular file")
+
+
+def _destination_inside_root(library_root: Path, destination: Path) -> None:
+    root = library_root.resolve()
+    resolved = destination.resolve(strict=False)
+    if resolved != root and root not in resolved.parents:
+        raise ImportPlanningError("destination escapes library root")
+
+
+def _existing_parent_symlink(library_root: Path, destination: Path) -> Path | None:
+    root = library_root.resolve()
+    current = root
+    for part in destination.relative_to(root).parts[:-1]:
+        current = current / part
+        if current.exists() and current.is_symlink():
+            return current
+    return None
+
+
+def _track_source_path(track: Track) -> Path:
+    raw = track.staging_path or track.source_path
+    if not raw:
+        raise ImportPlanningError(f"track {track.id} has no staged source path")
+    return Path(raw)
+
+
+def _tags_for(release: Release, track: Track) -> dict[str, str]:
+    tags = {
+        "title": track.title or "",
+        "artist": track.artist or "",
+        "album": track.album or release.title or "",
+        "album_artist": track.album_artist or release.album_artist or track.artist or "",
+        "date": track.year or release.year or "",
+        "tracknumber": str(track.track_no or ""),
+        "discnumber": str(track.disc or ""),
+        "musicbrainz_trackid": track.mbid or "",
+        "musicbrainz_albumid": release.release_mbid or "",
+    }
+    return {key: value for key, value in tags.items() if value}
+
+
+class MutagenTagWriter:
+    @no_type_check
+    def write_and_verify(self, path: Path, tags: dict[str, str]) -> bool:
+        suffix = path.suffix.casefold()
+        if suffix == ".mp3":
+            id3 = ID3()
+            if title := tags.get("title"):
+                id3.add(TIT2(encoding=3, text=title))
+            if artist := tags.get("artist"):
+                id3.add(TPE1(encoding=3, text=artist))
+            if album := tags.get("album"):
+                id3.add(TALB(encoding=3, text=album))
+            if album_artist := tags.get("album_artist"):
+                id3.add(TPE2(encoding=3, text=album_artist))
+            if date := tags.get("date"):
+                id3.add(TDRC(encoding=3, text=date))
+            if tracknumber := tags.get("tracknumber"):
+                id3.add(TRCK(encoding=3, text=tracknumber))
+            if discnumber := tags.get("discnumber"):
+                id3.add(TPOS(encoding=3, text=discnumber))
+            if recording := tags.get("musicbrainz_trackid"):
+                id3.add(TXXX(encoding=3, desc="MusicBrainz Track Id", text=recording))
+            if release := tags.get("musicbrainz_albumid"):
+                id3.add(TXXX(encoding=3, desc="MusicBrainz Album Id", text=release))
+            id3.save(path, v2_version=3)
+        elif suffix == ".flac":
+            flac = FLAC(path)
+            for key, value in tags.items():
+                flac[key] = value
+            flac.save()
+        else:
+            return False
+        readback = self.read_tags(path)
+        return all(readback.get(key) == value for key, value in tags.items())
+
+    @no_type_check
+    def read_tags(self, path: Path) -> dict[str, str]:
+        suffix = path.suffix.casefold()
+        if suffix == ".flac":
+            flac = FLAC(path)
+            flac_values: dict[str, str] = {}
+            for key in (
+                "title",
+                "artist",
+                "album",
+                "album_artist",
+                "date",
+                "tracknumber",
+                "discnumber",
+                "musicbrainz_trackid",
+                "musicbrainz_albumid",
+            ):
+                if tag_values := flac.get(key):
+                    flac_values[key] = str(tag_values[0])
+            return flac_values
+        if suffix != ".mp3":
+            return {}
+        id3 = ID3(path)
+        values: dict[str, str] = {}
+        frame_map = {
+            "title": "TIT2",
+            "artist": "TPE1",
+            "album": "TALB",
+            "album_artist": "TPE2",
+            "date": "TDRC",
+            "tracknumber": "TRCK",
+            "discnumber": "TPOS",
+        }
+        for key, frame_id in frame_map.items():
+            frame = id3.get(frame_id)
+            if frame is not None and getattr(frame, "text", None):
+                values[key] = str(frame.text[0])
+        for frame in id3.getall("TXXX"):
+            desc = frame.desc.casefold()
+            if frame.text and desc == "musicbrainz track id":
+                values["musicbrainz_trackid"] = str(frame.text[0])
+            if frame.text and desc == "musicbrainz album id":
+                values["musicbrainz_albumid"] = str(frame.text[0])
+        return values
+
+
+async def plan_release_import(
+    db: AsyncSession,
+    release: Release,
+    *,
+    library_root: Path,
+    naming_template: str = _DESTINATION_TEMPLATE,
+    source_artifacts: dict[int, tuple[Path, str]] | None = None,
+) -> list[ImportPlan]:
+    await db.execute(delete(ImportPlan).where(ImportPlan.release_id == release.id))
+    await db.flush()
+    tracks_result = await db.execute(
+        select(Track).where(Track.release_id == release.id).order_by(Track.track_no, Track.id)
+    )
+    tracks = list(tracks_result.scalars().all())
+
+    library_root = _resolved_path(library_root)
+    plans: list[ImportPlan] = []
+    for track in tracks:
+        artifact = (
+            source_artifacts.get(track.id) if source_artifacts and track.id is not None else None
+        )
+        source = artifact[0] if artifact else _track_source_path(track)
+        status = ImportWorkflowState.ready
+        collision = CollisionState.clear
+        error: str | None = None
+        source_hash: str | None = None
+        operations: list[str] = [
+            "hash-source",
+            "copy-to-destination-filesystem-temp",
+            "fsync-temp",
+            "tag-and-readback",
+            "recheck-destination",
+            "atomic-rename",
+            "fsync-destination-directory",
+            "retain-staged-source",
+        ]
+
+        try:
+            _ensure_regular_source(source)
+            source_hash = _sha256(source)
+            if artifact is not None and source_hash != artifact[1]:
+                raise ImportPlanningError(
+                    f"candidate artifact hash does not match track {track.id}"
+                )
+            relative = render_path(track, template=naming_template)
+            destination = library_root / relative
+            symlink_parent = _existing_parent_symlink(library_root, destination)
+            if symlink_parent is not None:
+                raise ImportPlanningError(f"destination parent is a symlink: {symlink_parent}")
+            _destination_inside_root(library_root, destination)
+            if destination.exists():
+                destination_hash = _sha256(destination) if destination.is_file() else None
+                status = ImportWorkflowState.needs_review
+                if destination_hash == source_hash:
+                    collision = CollisionState.duplicate
+                    error = "destination already contains same bytes"
+                else:
+                    collision = CollisionState.conflict
+                    error = "destination already exists with different bytes"
+            else:
+                existing = await db.execute(
+                    select(Track).where(Track.content_sha256 == source_hash, Track.id != track.id)
+                )
+                if existing.scalars().first() is not None:
+                    status = ImportWorkflowState.needs_review
+                    collision = CollisionState.duplicate
+                    error = "same content hash already belongs to another track"
+        except (ImportPlanningError, NamingError, OSError) as exc:
+            try:
+                relative = render_path(track)
+            except NamingError:
+                relative = f"track-{track.id or 'unknown'}"
+            destination = library_root / relative
+            status = ImportWorkflowState.needs_review
+            collision = CollisionState.needs_review
+            error = str(exc)
+
+        track.content_sha256 = source_hash
+        track.import_state = status
+        plan = ImportPlan(
+            release_id=release.id,
+            track_id=track.id,
+            source_path=str(source),
+            staging_path=track.staging_path,
+            destination_path=str(destination),
+            planned_operations_json=json.dumps(operations),
+            collision_state=collision,
+            tag_verification_state=TagVerificationState.pending,
+            status=status,
+            error_detail=error,
+        )
+        db.add(plan)
+        plans.append(plan)
+
+    release.import_state = (
+        ImportWorkflowState.ready
+        if plans and all(plan.status == ImportWorkflowState.ready for plan in plans)
+        else ImportWorkflowState.needs_review
+    )
+    await db.flush()
+    return plans
+
+
+def _copy_to_temp(source: Path, pinned: PinnedDestination, expected_hash: str) -> tuple[str, Path]:
+    source_fd = _open_regular_source_no_follow(source)
+    fd, temp_name = pinned.create_temp(suffix=pinned.destination.suffix)
+    temp_path = pinned.proc_path(temp_name)
+    try:
+        with os.fdopen(source_fd, "rb") as src, os.fdopen(fd, "wb") as temp:
+            shutil.copyfileobj(src, temp, length=1024 * 1024)
+            temp.flush()
+            os.fsync(temp.fileno())
+        with pinned.open_read(temp_name) as temp_read:
+            copied_hash = _sha256_fileobj(temp_read)
+        if copied_hash != expected_hash:
+            raise ImportExecutionError(
+                "short copy or checksum mismatch while staging destination temp"
+            )
+    except Exception:
+        pinned.unlink(temp_name)
+        raise
+    return temp_name, temp_path
+
+
+def _close_pinned_destinations(destinations: list[PinnedDestination]) -> None:
+    for pinned in reversed(destinations):
+        pinned.close()
+
+
+def _rollback_pinned_filesystem(
+    temp_paths: list[tuple[PinnedDestination, str]],
+    created_destinations: list[tuple[PinnedDestination, str]],
+    backup_paths: list[tuple[PinnedDestination, str, str]],
+) -> None:
+    for pinned, temp_name in temp_paths:
+        try:
+            pinned.unlink(temp_name)
+        except OSError:
+            logger.exception("failed to remove import temporary file during rollback")
+    for pinned, destination_name in reversed(created_destinations):
+        try:
+            pinned.unlink(destination_name)
+        except OSError:
+            logger.exception("failed to remove imported destination during rollback")
+    for pinned, destination_name, backup_name in backup_paths:
+        if pinned.exists(backup_name):
+            try:
+                # os.replace overwrites a surviving new destination atomically.
+                pinned.replace(backup_name, destination_name)
+                pinned.fsync()
+            except OSError:
+                logger.exception("failed to restore library backup during rollback")
+
+
+async def execute_release_import(
+    db: AsyncSession,
+    release: Release,
+    *,
+    library_root: Path,
+    tag_writer: MutagenTagWriter | None = None,
+    before_commit: Callable[[Path], None] | None = None,
+    replace_existing_verified: bool = False,
+) -> list[ImportPlan]:
+    tag_writer = tag_writer or MutagenTagWriter()
+    plans_result = await db.execute(
+        select(ImportPlan).where(ImportPlan.release_id == release.id).order_by(ImportPlan.id)
+    )
+    plans = list(plans_result.scalars().all())
+    if not plans:
+        plans = await plan_release_import(db, release, library_root=library_root)
+    if any(plan.status != ImportWorkflowState.ready for plan in plans):
+        raise ImportExecutionError("release has import plans that are not ready")
+
+    pinned_destinations: list[PinnedDestination] = []
+    created_destinations: list[tuple[PinnedDestination, str]] = []
+    temp_paths: list[tuple[PinnedDestination, str]] = []
+    backup_paths: list[tuple[PinnedDestination, str, str]] = []
+    release.import_state = ImportWorkflowState.importing
+    for plan in plans:
+        plan.status = ImportWorkflowState.importing
+    await db.flush()
+
+    try:
+        for plan in plans:
+            track = plan.track
+            if track is None:
+                raise ImportExecutionError("import plan is missing a track")
+            source = Path(plan.source_path)
+            destination = Path(plan.destination_path)
+            _destination_inside_root(library_root, destination)
+            pinned = PinnedDestination.open(library_root, destination)
+            pinned_destinations.append(pinned)
+            if pinned.exists() and not replace_existing_verified:
+                raise ImportExecutionError("destination exists before import commit")
+            expected_hash = track.content_sha256 or _sha256_regular_source_no_follow(source)
+            temp_name, temp_path = _copy_to_temp(source, pinned, expected_hash)
+            temp_paths.append((pinned, temp_name))
+            plan.destination_temp_path = str(pinned.display_path(temp_name))
+            if not tag_writer.write_and_verify(temp_path, _tags_for(release, track)):
+                plan.tag_verification_state = TagVerificationState.failed
+                raise ImportExecutionError("tag readback failed")
+            plan.tag_verification_state = TagVerificationState.verified
+            if before_commit is not None:
+                before_commit(destination)
+            pinned.verify_attached()
+            if replace_existing_verified:
+                if not pinned.is_regular_non_symlink():
+                    raise ImportExecutionError("upgrade destination changed before atomic rename")
+                backup_name = pinned.backup_existing(suffix=".backup")
+                backup_paths.append((pinned, pinned.name, backup_name))
+            elif pinned.exists():
+                raise ImportExecutionError("destination appeared before atomic rename")
+            pinned.replace(temp_name, pinned.name)
+            pinned.fsync()
+            temp_paths.remove((pinned, temp_name))
+            created_destinations.append((pinned, pinned.name))
+            track.import_state = ImportWorkflowState.imported
+            with pinned.open_read(pinned.name) as imported_file:
+                track.content_sha256 = _sha256_fileobj(imported_file)
+            plan.status = ImportWorkflowState.imported
+            plan.collision_state = CollisionState.clear
+        release.import_state = ImportWorkflowState.imported
+        await db.flush()
+
+        committed_destinations = tuple(created_destinations)
+        committed_backups = tuple(backup_paths)
+        pending_temps = tuple(temp_paths)
+        committed_handles = tuple(pinned_destinations)
+
+        def finalize_filesystem_commit() -> None:
+            try:
+                for pinned, _destination_name, backup_name in committed_backups:
+                    try:
+                        _unlink_backup_after_commit(pinned.proc_path(backup_name))
+                    except OSError:
+                        continue
+            finally:
+                _close_pinned_destinations(list(committed_handles))
+
+        def rollback_filesystem_commit() -> None:
+            try:
+                _rollback_pinned_filesystem(
+                    list(pending_temps),
+                    list(committed_destinations),
+                    list(committed_backups),
+                )
+            finally:
+                _close_pinned_destinations(list(committed_handles))
+
+        register_transaction_callbacks(
+            db,
+            after_commit=finalize_filesystem_commit,
+            after_rollback=rollback_filesystem_commit,
+        )
+        return plans
+    except Exception as exc:
+        try:
+            _rollback_pinned_filesystem(temp_paths, created_destinations, backup_paths)
+        finally:
+            _close_pinned_destinations(pinned_destinations)
+        detail = str(exc)
+        release.import_state = ImportWorkflowState.rolled_back
+        release.rollback_detail = detail
+        for plan in plans:
+            if plan.status == ImportWorkflowState.imported:
+                plan.status = ImportWorkflowState.rolled_back
+                plan.rollback_detail = detail
+            elif plan.status == ImportWorkflowState.importing:
+                plan.status = ImportWorkflowState.failed
+                plan.error_detail = detail
+            plan.destination_temp_path = None
+        tracks_result = await db.execute(select(Track).where(Track.release_id == release.id))
+        for track in tracks_result.scalars().all():
+            if track.import_state == ImportWorkflowState.imported:
+                track.import_state = ImportWorkflowState.rolled_back
+        await db.flush()
+        if isinstance(exc, ImportExecutionError):
+            raise
+        raise ImportExecutionError(detail) from exc

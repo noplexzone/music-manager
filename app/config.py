@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_debug: bool = False
     secret_key: str = Field(..., min_length=1)
+    session_ttl_seconds: int = Field(default=43_200, ge=300, le=2_592_000)
+    auth_cookie_secure: bool = True
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./data/music_manager.db"
@@ -27,6 +29,7 @@ class Settings(BaseSettings):
     # Library naming
     naming_template: str = "{album_artist}/{year} - {album}/{disc_track} - {title}.{ext}"
     library_root: Path = Path("/music")
+    staging_root: Path = Path("/staging/music-manager")
 
     # slskd
     slskd_url: str = ""
@@ -45,7 +48,7 @@ class Settings(BaseSettings):
 
     # MusicBrainz
     musicbrainz_app_name: str = "music-manager"
-    musicbrainz_app_version: str = "0.1.0"
+    musicbrainz_app_version: str = "0.1.1"
     musicbrainz_contact: str = ""
 
     # Deezer

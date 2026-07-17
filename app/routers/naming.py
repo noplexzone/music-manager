@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.auth import require_mutation
 from app.config import Settings, get_settings
 from app.naming.convention import NamingError, render_path
 from app.schemas.track import NamingPreviewRequest, NamingPreviewResponse
@@ -15,6 +16,7 @@ router = APIRouter()
 async def naming_preview(
     req: NamingPreviewRequest,
     settings: Annotated[Settings, Depends(get_settings)],
+    _user: Annotated[object, Depends(require_mutation)],
 ) -> NamingPreviewResponse:
     template = req.template or settings.naming_template
     try:

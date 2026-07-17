@@ -7,22 +7,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import ParseResult, urlparse
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
+from app.database import get_session_factory
 from app.fingerprint.acoustid import fingerprint_file, lookup_acoustid
 from app.metadata.deezer import DeezerClient
 from app.metadata.musicbrainz import MusicBrainzClient
 from app.models.job import Job, JobStatus
 from app.models.path_preview import PathPreview
+from app.models.release import Release
 from app.models.track import FingerprintState, IdentityResolutionState, Track
+from app.models.workflow import AcquisitionState
 from app.naming.convention import NamingError, render_path
 from app.schemas.search import SearchRequest, SearchResult
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
 from app.sources.slskd import SlskdAdapter
-from app.sources.youtube import YouTubeAdapter
+from app.sources.youtube import ProviderError, YouTubeAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +35,28 @@ def _now() -> datetime:
     return datetime.now(tz=UTC)
 
 
-async def run_job(job_id: int, db: AsyncSession, settings: Settings | None = None) -> None:
+async def run_job(
+    job_id: int, db: AsyncSession | None = None, settings: Settings | None = None
+) -> None:
     cfg = settings or get_settings()
+    if db is None:
+        factory = get_session_factory()
+        async with factory() as session:
+            try:
+                await _run_job_in_session(job_id, session, cfg)
+                await session.commit()
+            except asyncio.CancelledError:
+                await session.commit()
+                raise
+            except Exception:
+                await session.rollback()
+                raise
+        return
 
+    await _run_job_in_session(job_id, db, cfg)
+
+
+async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> None:
     job = await db.get(Job, job_id)
     if job is None:
         logger.error("Job %d not found", job_id)
@@ -48,21 +71,36 @@ async def run_job(job_id: int, db: AsyncSession, settings: Settings | None = Non
         tracks_created = 0
         failures: list[str] = []
         for result in results:
+            track: Track | None = None
             try:
-                source_job_id, source_status = await _prepare_acquisition(result, job.source, cfg)
+                release = Release(
+                    job_id=job_id,
+                    source=result.source,
+                    title=result.title,
+                    album_artist=result.artist,
+                )
+                db.add(release)
+                await db.flush()
+
                 track = Track(
                     job_id=job_id,
+                    release_id=release.id,
                     title=result.title,
                     artist=result.artist,
                     album_artist=result.artist,
-                    source_path=result.url,
-                    source_job_id=source_job_id,
-                    source_status=source_status,
+                    source_path=None,
                     source=result.source,
+                    acquisition_state=AcquisitionState.acquiring,
                     fingerprint_state=FingerprintState.pending,
                 )
                 db.add(track)
                 await db.flush()
+
+                source_job_id, source_status = await _prepare_acquisition(
+                    result, job.source, cfg, track
+                )
+                track.source_job_id = source_job_id
+                track.source_status = source_status
 
                 await _enrich_musicbrainz(track, cfg)
                 await _enrich_deezer(track, cfg)
@@ -70,9 +108,17 @@ async def run_job(job_id: int, db: AsyncSession, settings: Settings | None = Non
                 await _compute_path_preview(track, db, cfg)
 
                 tracks_created += 1
-            except Exception as exc:
-                logger.warning("Failed to process result %s: %s", result.url, exc)
-                failures.append(str(exc))
+            except ProviderError as exc:
+                if track is not None:
+                    track.acquisition_state = AcquisitionState.failed
+                    track.source_status = exc.code
+                logger.warning("Provider result processing failed with code %s", exc.code)
+                failures.append(json.dumps(exc.details(), sort_keys=True))
+            except Exception:
+                if track is not None:
+                    track.acquisition_state = AcquisitionState.failed
+                logger.warning("Result processing failed")
+                failures.append("result_processing_failed")
 
         if failures:
             job.status = JobStatus.failed
@@ -81,10 +127,33 @@ async def run_job(job_id: int, db: AsyncSession, settings: Settings | None = Non
             job.status = JobStatus.done
             job.result_json = json.dumps({"tracks_created": tracks_created})
         job.updated_at = _now()
-    except Exception as exc:
-        logger.exception("Job %d failed: %s", job_id, exc)
+    except ProviderError as exc:
+        logger.warning("Job %d provider failure code %s", job_id, exc.code)
         job.status = JobStatus.failed
-        job.result_json = json.dumps({"error": str(exc)})
+        job.result_json = json.dumps({"error": exc.details()})
+        job.updated_at = _now()
+    except asyncio.CancelledError:
+        job.status = JobStatus.cancelled
+        tracks = (await db.execute(select(Track).where(Track.job_id == job.id))).scalars()
+        for track in tracks:
+            if track.acquisition_state in {
+                AcquisitionState.queued,
+                AcquisitionState.searching,
+                AcquisitionState.acquiring,
+            }:
+                track.acquisition_state = AcquisitionState.cancelled
+        job.result_json = json.dumps(
+            {"error": {"code": "cancelled", "operation": "job", "retryable": True}}
+        )
+        job.updated_at = _now()
+        await db.flush()
+        raise
+    except Exception:
+        logger.error("Job %d failed", job_id)
+        job.status = JobStatus.failed
+        job.result_json = json.dumps(
+            {"error": {"code": "job_failed", "operation": "job", "retryable": True}}
+        )
         job.updated_at = _now()
 
     await db.flush()
@@ -105,9 +174,23 @@ async def _fetch_results(job: Job, cfg: Settings) -> list[SearchResult]:
 
 
 async def _prepare_acquisition(
-    result: SearchResult, source: str, cfg: Settings
+    result: SearchResult, source: str, cfg: Settings, track: Track | None = None
 ) -> tuple[str | None, str | None]:
+    if source == "youtube":
+        if not result.url:
+            raise ProviderError("invalid_result", "YouTube result URL is missing", "acquire")
+        acquired = await YouTubeAdapter(cfg.ytdlp_cookies_file).acquire(
+            result.url, cfg.staging_root
+        )
+        if track is not None:
+            track.source_path = str(acquired.path)
+            track.staging_path = str(acquired.path)
+            track.acquisition_state = AcquisitionState.downloaded
+            track.acquisition_provenance_json = json.dumps(acquired.provenance, sort_keys=True)
+        return None, "downloaded"
     if source != "prowlarr":
+        if track is not None:
+            track.source_path = result.url
         return None, None
     nzb_url = _validated_nzb_url(result, cfg)
 

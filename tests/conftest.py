@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -19,16 +18,12 @@ from app.main import create_app
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture(scope="session")
-def event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
-    return asyncio.DefaultEventLoopPolicy()
-
-
 @pytest.fixture
 def test_settings(tmp_path: Path) -> Settings:
     settings = Settings(
         database_url=TEST_DB_URL,
         secret_key="test-secret",
+        auth_cookie_secure=False,
         library_root=tmp_path / "library",
         slskd_url="",
         slskd_api_key="",
@@ -56,7 +51,9 @@ async def db_session(test_settings: Settings) -> AsyncGenerator[AsyncSession, No
 
 
 @pytest_asyncio.fixture
-async def client(test_settings: Settings) -> AsyncGenerator[AsyncClient, None]:
+async def unauthenticated_client(
+    test_settings: Settings,
+) -> AsyncGenerator[AsyncClient, None]:
     reset_engine(TEST_DB_URL)
     app = create_app()
     engine = create_async_engine(TEST_DB_URL)
@@ -75,3 +72,13 @@ async def client(test_settings: Settings) -> AsyncGenerator[AsyncClient, None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def client(unauthenticated_client: AsyncClient) -> AsyncGenerator[AsyncClient, None]:
+    setup = await unauthenticated_client.post(
+        "/api/auth/setup",
+        json={"username": "test-owner", "password": "Test-Owner-Password-42"},
+    )
+    unauthenticated_client.headers["X-CSRF-Token"] = setup.json()["csrf_token"]
+    yield unauthenticated_client

@@ -17,6 +17,7 @@
       <a href="/" {% if request.url.path == "/" %}class="active"{% endif %}>Dashboard</a>
       <a href="/search" {% if request.url.path.startswith("/search") %}class="active"{% endif %}>Search</a>
       <a href="/jobs/ui/list" {% if request.url.path.startswith("/jobs") %}class="active"{% endif %}>Jobs</a>
+      <a href="/imports/ui/review" {% if request.url.path.startswith("/imports") %}class="active"{% endif %}>Imports</a>
       <a href="/api/docs" target="_blank">API</a>
     </nav>
   </header>
@@ -30,8 +31,32 @@
   </main>
 
   <footer>
-    Music Manager v0.1.0 &mdash; private, self-hosted
+    Music Manager v0.1.1 &mdash; private, self-hosted
   </footer>
 </div>
+<script>
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || form.method.toLowerCase() !== "post") return;
+  event.preventDefault();
+  const csrf = document.cookie.split("; ").find((part) => part.startsWith("csrf="))?.split("=")[1];
+  const headers = csrf ? {"X-CSRF-Token": decodeURIComponent(csrf)} : {};
+  const credentialsForm = form.action.endsWith("/api/auth/setup") || form.action.endsWith("/api/auth/login");
+  let body;
+  if (credentialsForm) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(Object.fromEntries(new FormData(form)));
+  } else {
+    body = new FormData(form);
+  }
+  const response = await fetch(form.action, {method: "POST", headers, body});
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    window.alert(payload.detail || "Request failed");
+    return;
+  }
+  window.location.assign(credentialsForm ? "/" : response.url);
+});
+</script>
 </body>
 </html>

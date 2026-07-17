@@ -15,12 +15,11 @@ from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
 from app.sources.slskd import SlskdAdapter
+from app.sources.tidal_status import TIDAL_STATUS
 from app.sources.youtube import YouTubeAdapter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-_TIDAL_STATUS = SourceStatus(available=False, reason="unavailable in v0.1.0")
 
 
 def _build_adapters(settings: Settings) -> dict[str, SourceAdapter]:
@@ -57,11 +56,17 @@ async def health(
     sources: dict[str, SourceStatus] = {}
     for name, result in zip(adapters.keys(), checks, strict=True):
         if isinstance(result, BaseException):
-            sources[name] = SourceStatus(available=False, reason=str(result))
+            sources[name] = SourceStatus(
+                available=False,
+                reason="Source health check failed",
+                details={"code": "health_check_failed"},
+            )
         else:
-            sources[name] = SourceStatus(available=result.available, reason=result.reason)
+            sources[name] = SourceStatus(
+                available=result.available, reason=result.reason, details=result.extra
+            )
 
-    sources["tidal"] = _TIDAL_STATUS
+    sources["tidal"] = TIDAL_STATUS
 
     db_writable = await _check_db(db)
 
@@ -92,9 +97,15 @@ async def health_sources(
     sources: dict[str, SourceStatus] = {}
     for name, result in zip(adapters.keys(), checks, strict=True):
         if isinstance(result, BaseException):
-            sources[name] = SourceStatus(available=False, reason=str(result))
+            sources[name] = SourceStatus(
+                available=False,
+                reason="Source health check failed",
+                details={"code": "health_check_failed"},
+            )
         else:
-            sources[name] = SourceStatus(available=result.available, reason=result.reason)
+            sources[name] = SourceStatus(
+                available=result.available, reason=result.reason, details=result.extra
+            )
 
-    sources["tidal"] = _TIDAL_STATUS
+    sources["tidal"] = TIDAL_STATUS
     return sources

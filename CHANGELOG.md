@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-17
+
+### Added
+
+- First-run owner setup, Argon2 password hashing, expiring database sessions, CSRF protection, role-based mutation authorization, and login throttling.
+- Added release, candidate, import-plan, monitoring, acquisition, and import workflow state foundations for v0.1.1 safe staging.
+- Added staging-root configuration and containment validation for future import execution.
+- Added evidence-scored edition matching with auditable review states for unattended or manual candidate selection.
+- Added duplicate/collision-aware import planning plus verified destination-temp atomic imports with Mutagen tag readback and rollback.
+- Added import review API and Jinja review page surfaces for planned operations, collisions, tag verification, and rollback status.
+- Added persisted quality profiles and monitoring history, non-overlapping cancellable checks, meaningful quality ranking, and verified rollback-safe upgrades.
+
+### Fixed
+
+- First-run owner setup now uses a database-enforced single-owner claim and returns a deterministic conflict when concurrent setup requests race.
+- Background job scheduling now opens its own database session instead of reusing the request-scoped session.
+- Configured pytest-asyncio fixture and test loop scopes explicitly.
+- Import Review Plan and Import forms now use CSRF-protected POST-redirect-GET handlers with a non-JavaScript form fallback, returning the browser to the refreshed review page instead of navigating to POST-only API URLs.
+- Packaged Jinja templates and static CSS in built distributions for clean wheel installs.
+- Edition matching now sends contradictory release attributes to review and prevents manual selection of another track's candidate.
+- Import execution now rejects post-plan symlink source swaps and only marks supported formats tag-verified after Mutagen readback.
+- Import filesystem changes now follow the surrounding database transaction: failed commits restore staged sources and prior library bytes, rollback callbacks isolate cleanup failures, backup names are claimed atomically, and descriptor-pinned destination directories reject ancestor swaps before atomic rename.
+- Import execution now rejects post-plan symlink swaps in every staged source path component.
+- Monitoring upgrades now require the approved selected release candidate, verify candidate-bound track artifacts and hashes, and isolate post-commit backup cleanup from rollback.
+- YouTube search now uses a bounded, cancellable yt-dlp subprocess with sanitized structured failures and truthful cookie/version health details; TIDAL reports exact lawful backend prerequisites while remaining unavailable.
+
 ## [0.1.0] - 2026-07-16
 
 ### Added
@@ -32,5 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Hardened job source validation, Prowlarr NZB URL trust checks, YouTube search timeout behavior, Docker build context exclusions, and filename extension preservation
 
-[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/noplexzone/music-manager/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/noplexzone/music-manager/releases/tag/v0.1.0

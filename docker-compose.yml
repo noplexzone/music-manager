@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: music-manager:0.1.0
+    image: noplexzone/music-manager:0.1.1
     container_name: music-manager
     restart: unless-stopped
     ports:
@@ -14,7 +14,8 @@ services:
       DATABASE_URL: "sqlite+aiosqlite:////app/data/music_manager.db"
     volumes:
       - ./data:/app/data
-      - ${LIBRARY_ROOT:-/music}:/music:ro
+      - ${LIBRARY_ROOT:-/music}:/music
+      - ${STAGING_ROOT:-/staging/music-manager}:/staging/music-manager
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

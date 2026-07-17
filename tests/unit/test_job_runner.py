@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,9 +11,11 @@ from app.config import Settings
 from app.jobs import runner
 from app.models.job import Job, JobStatus
 from app.models.track import IdentityResolutionState, Track
+from app.models.workflow import AcquisitionState
 from app.naming.convention import NamingError
 from app.schemas.search import SearchResult
 from app.sources.base import CapabilityState
+from app.sources.youtube import ProviderError
 
 
 async def _create_job(db_session: AsyncSession, source: str = "youtube") -> Job:
@@ -38,14 +42,62 @@ async def test_run_job_marks_failed_when_result_processing_fails(
     async def fail_musicbrainz(track: Track, cfg: Settings) -> None:
         raise RuntimeError("metadata boom")
 
+    async def noop_acquisition(
+        result: SearchResult, source: str, cfg: Settings, track: Track | None = None
+    ) -> tuple[None, None]:
+        return None, None
+
     mp.setattr(runner, "_fetch_results", fake_fetch_results)
+    mp.setattr(runner, "_prepare_acquisition", noop_acquisition)
     mp.setattr(runner, "_enrich_musicbrainz", fail_musicbrainz)
 
     await runner.run_job(job.id, db_session, test_settings)
 
     assert job.status == JobStatus.failed
     assert job.result_json is not None
-    assert "metadata boom" in job.result_json
+    assert "result_processing_failed" in job.result_json
+
+
+async def test_provider_error_persists_typed_failure_without_secret(
+    db_session: AsyncSession, test_settings: Settings, monkeypatch: object, caplog: object
+) -> None:
+    from pytest import LogCaptureFixture, MonkeyPatch
+
+    assert isinstance(monkeypatch, MonkeyPatch)
+    assert isinstance(caplog, LogCaptureFixture)
+    job = await _create_job(db_session)
+
+    async def fail(job: Job, cfg: Settings) -> Sequence[SearchResult]:
+        raise ProviderError("timeout", "secret URL https://x/?token=bad", "search", True)
+
+    monkeypatch.setattr(runner, "_fetch_results", fail)
+    await runner.run_job(job.id, db_session, test_settings)
+    assert job.status == JobStatus.failed
+    assert (
+        job.result_json
+        == '{"error": {"code": "timeout", "operation": "search", "retryable": true}}'
+    )
+    assert "secret" not in caplog.text
+
+
+async def test_cancellation_persists_job_and_track_state(
+    db_session: AsyncSession, test_settings: Settings, monkeypatch: object
+) -> None:
+    from pytest import MonkeyPatch
+
+    assert isinstance(monkeypatch, MonkeyPatch)
+    job = await _create_job(db_session)
+    track = Track(job_id=job.id, source="youtube", acquisition_state=AcquisitionState.acquiring)
+    db_session.add(track)
+
+    async def cancel(job: Job, cfg: Settings) -> Sequence[SearchResult]:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(runner, "_fetch_results", cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await runner.run_job(job.id, db_session, test_settings)
+    assert job.status == JobStatus.cancelled
+    assert track.acquisition_state == AcquisitionState.cancelled
 
 
 async def test_prowlarr_result_is_enqueued_to_sabnzbd(
@@ -126,7 +178,13 @@ async def test_path_preview_naming_error_marks_job_failed(
     def fail_render_path(*args: object, **kwargs: object) -> str:
         raise NamingError("bad naming")
 
+    async def noop_acquisition(
+        result: SearchResult, source: str, cfg: Settings, track: Track | None = None
+    ) -> tuple[None, None]:
+        return None, None
+
     mp.setattr(runner, "_fetch_results", fake_fetch_results)
+    mp.setattr(runner, "_prepare_acquisition", noop_acquisition)
     mp.setattr(runner, "_enrich_musicbrainz", noop)
     mp.setattr(runner, "_enrich_deezer", noop)
     mp.setattr(runner, "_run_fingerprint", noop)
@@ -136,7 +194,7 @@ async def test_path_preview_naming_error_marks_job_failed(
 
     assert job.status == JobStatus.failed
     assert job.result_json is not None
-    assert "bad naming" in job.result_json
+    assert "result_processing_failed" in job.result_json
 
 
 async def test_prowlarr_rejects_non_nzb_and_loopback_urls(

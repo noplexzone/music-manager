@@ -1,20 +1,62 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import logging
+from collections.abc import AsyncGenerator, Callable
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
     pass
+
+
+_AFTER_COMMIT_KEY = "music_manager_after_commit"
+_AFTER_ROLLBACK_KEY = "music_manager_after_rollback"
+
+
+def register_transaction_callbacks(
+    session: AsyncSession,
+    *,
+    after_commit: Callable[[], None],
+    after_rollback: Callable[[], None],
+) -> None:
+    """Register filesystem work that follows the surrounding DB transaction."""
+    sync_session = session.sync_session
+    sync_session.info.setdefault(_AFTER_COMMIT_KEY, []).append(after_commit)
+    sync_session.info.setdefault(_AFTER_ROLLBACK_KEY, []).append(after_rollback)
+
+
+@event.listens_for(Session, "after_commit")
+def _run_after_commit_callbacks(session: Session) -> None:
+    callbacks = list(session.info.pop(_AFTER_COMMIT_KEY, []))
+    session.info.pop(_AFTER_ROLLBACK_KEY, None)
+    for callback in callbacks:
+        try:
+            callback()
+        except Exception:
+            logger.exception("after-commit transaction callback failed")
+
+
+@event.listens_for(Session, "after_rollback")
+def _run_after_rollback_callbacks(session: Session) -> None:
+    callbacks = list(reversed(session.info.pop(_AFTER_ROLLBACK_KEY, [])))
+    session.info.pop(_AFTER_COMMIT_KEY, None)
+    for callback in callbacks:
+        try:
+            callback()
+        except Exception:
+            logger.exception("after-rollback transaction callback failed")
 
 
 def _make_engine(url: str | None = None) -> AsyncEngine:
