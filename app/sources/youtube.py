@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import sys
+import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+import mutagen
 
 from app.schemas.search import SearchRequest, SearchResult
 from app.sources.base import CapabilityState
@@ -22,6 +25,9 @@ _DEFAULT_SEARCH_TIMEOUT_SEC = 30.0
 _PROCESS_STOP_GRACE_SEC = 2.0
 _YTDLP_SOCKET_TIMEOUT_SEC = 15
 _HEALTH_PROBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+_SUPPORTED_AUDIO_EXTENSIONS = frozenset(
+    {"aac", "flac", "m4a", "mp3", "ogg", "opus", "wav", "webm"}
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +85,7 @@ def _cookie_status(cookie_file: str) -> tuple[bool, str, str]:
     try:
         with path.open(encoding="utf-8") as cookie_stream:
             header = cookie_stream.readline(256).strip()
+            cookie_lines = list(cookie_stream)
     except (OSError, UnicodeError):
         return False, "cookies_unreadable", "Configured cookies file is not readable"
     if not header.startswith("# Netscape HTTP Cookie File"):
@@ -87,7 +94,56 @@ def _cookie_status(cookie_file: str) -> tuple[bool, str, str]:
             "cookies_invalid_or_expired",
             "Configured cookies file is not valid Netscape format",
         )
-    return True, "configured", "Cookies are configured"
+    expiries: list[int] = []
+    for line in cookie_lines:
+        stripped = line.strip()
+        if stripped.startswith("#HttpOnly_"):
+            stripped = stripped.removeprefix("#HttpOnly_")
+        elif not stripped or stripped.startswith("#"):
+            continue
+        fields = stripped.split("\t")
+        if len(fields) != 7:
+            continue
+        with suppress(ValueError):
+            expiries.append(int(fields[4]))
+    if not expiries or not any(expiry == 0 or expiry > time.time() for expiry in expiries):
+        return False, "cookies_invalid_or_expired", "Configured cookies are expired"
+    return True, "configured", "Cookies are configured; authentication is unprobed"
+
+
+def _open_pinned_directory(path: Path) -> int:
+    """Open/create a directory path without following any component symlinks."""
+    absolute = Path(os.path.abspath(path))
+    current_fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in absolute.parts[1:]:
+            try:
+                next_fd = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=current_fd,
+                )
+            except FileNotFoundError:
+                os.mkdir(component, mode=0o700, dir_fd=current_fd)
+                next_fd = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=current_fd,
+                )
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except OSError:
+        os.close(current_fd)
+        raise
+
+
+def _is_supported_audio(path: Path) -> bool:
+    try:
+        media = mutagen.File(path)
+    except (mutagen.MutagenError, OSError):
+        return False
+    return media is not None and media.info is not None
 
 
 def _classify_failure(stderr: bytes, operation: str = "search") -> ProviderError:
@@ -194,7 +250,7 @@ class YouTubeAdapter:
         )
         details.update(
             code="ok" if has_audio else "format_unavailable",
-            auth="cookie_access_ok" if self._cookies_file else "public_access_ok",
+            auth="unprobed",
             throttling="not_detected",
             audio_formats="available" if has_audio else "unavailable",
         )
@@ -276,18 +332,34 @@ class YouTubeAdapter:
             raise ProviderError("invalid_result", "YouTube result URL is invalid", "acquire")
         parent = staging_root / "youtube"
         final_dir = parent / video_id
-        temp_dir = parent / f".{video_id}.{uuid.uuid4().hex}.partial"
-        staging_root.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 - bounded setup
-        if staging_root.is_symlink() or (  # noqa: ASYNC240 - reject link escape
-            parent.exists() and parent.is_symlink()
-        ):
-            raise ProviderError("unsafe_staging", "YouTube staging root is unsafe", "acquire")
-        if final_dir.exists() or final_dir.is_symlink():
+        temp_name = f".{video_id}.{uuid.uuid4().hex}.partial"
+        root_fd: int | None = None
+        try:
+            root_fd = _open_pinned_directory(staging_root)  # noqa: ASYNC240 - bounded setup
+            with suppress(FileExistsError):
+                os.mkdir("youtube", mode=0o700, dir_fd=root_fd)
+            parent_fd = os.open(
+                "youtube", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd
+            )
+        except OSError as exc:
+            raise ProviderError(
+                "unsafe_staging", "YouTube staging root is unsafe", "acquire"
+            ) from exc
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
+        try:
+            os.stat(video_id, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            os.close(parent_fd)
             raise ProviderError(
                 "staging_collision", "YouTube staging destination exists", "acquire"
             )
-        temp_dir.mkdir(parents=True, exist_ok=False)
-        output = temp_dir / "audio.%(ext)s"
+        os.mkdir(temp_name, mode=0o700, dir_fd=parent_fd)
+        pinned_temp = Path(f"/proc/self/fd/{parent_fd}/{temp_name}")
+        output = pinned_temp / "audio.%(ext)s"
         command = self._base_command() + [
             "--no-playlist",
             "--format",
@@ -303,6 +375,7 @@ class YouTubeAdapter:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
+                pass_fds=(parent_fd,),
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
@@ -324,32 +397,54 @@ class YouTubeAdapter:
                 raise ProviderError(
                     "extractor_error", "YouTube extractor returned invalid data", "acquire"
                 ) from exc
+            if not isinstance(info, dict):
+                raise ProviderError(
+                    "extractor_error", "YouTube extractor returned invalid data", "acquire"
+                )
+            extension = info.get("ext")
+            audio_codec = info.get("acodec")
+            if (
+                not isinstance(extension, str)
+                or extension.casefold() not in _SUPPORTED_AUDIO_EXTENSIONS
+                or not isinstance(audio_codec, str)
+                or audio_codec.casefold() in {"", "none"}
+            ):
+                raise ProviderError(
+                    "artifact_invalid",
+                    "YouTube acquisition produced invalid audio metadata",
+                    "acquire",
+                )
             artifacts = [
                 item
-                for item in temp_dir.iterdir()
+                for item in pinned_temp.iterdir()  # noqa: ASYNC240 - local bounded inspection
                 if item.is_file() and not item.is_symlink() and ".part" not in item.name
             ]
-            if len(artifacts) != 1 or artifacts[0].stat().st_size == 0:
+            if (
+                len(artifacts) != 1
+                or artifacts[0].name != f"audio.{extension}"
+                or artifacts[0].stat().st_size == 0
+                or not _is_supported_audio(artifacts[0])
+            ):
                 raise ProviderError(
                     "artifact_invalid",
                     "YouTube acquisition produced no verified audio artifact",
                     "acquire",
                 )
             artifact_name = artifacts[0].name
-            os.rename(temp_dir, final_dir)
+            os.rename(temp_name, video_id, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             provenance = {
                 "provider": "youtube",
                 "video_id": video_id,
                 "format_id": info.get("format_id"),
-                "extension": info.get("ext"),
-                "audio_codec": info.get("acodec"),
+                "extension": extension,
+                "audio_codec": audio_codec,
                 "ytdlp_version": _ytdlp_version(),
                 "cookies_used": bool(self._cookies_file),
             }
             return AcquiredMedia(final_dir / artifact_name, provenance)
         finally:
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(pinned_temp, ignore_errors=True)
+            os.close(parent_fd)
 
     @staticmethod
     def _results(info: dict[str, Any]) -> list[SearchResult]:

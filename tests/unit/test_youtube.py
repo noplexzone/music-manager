@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -48,7 +49,7 @@ class TestYouTubeHealth:
             "code": "ok",
             "version": "2026.7.1",
             "cookies": "not_configured",
-            "auth": "public_access_ok",
+            "auth": "unprobed",
             "throttling": "not_detected",
             "audio_formats": "available",
         }
@@ -89,6 +90,36 @@ class TestYouTubeHealth:
         assert state.available is False
         assert state.extra["code"] == "format_unavailable"
 
+    async def test_health_rejects_expired_cookies(self, tmp_path: Path) -> None:
+        cookie_file = tmp_path / "cookies.txt"
+        cookie_file.write_text(
+            "# Netscape HTTP Cookie File\n"
+            f".youtube.com\tTRUE\t/\tTRUE\t{int(time.time()) - 60}\tSID\texpired\n"
+        )
+        with patch("app.sources.youtube._ytdlp_available", return_value=True):
+            state = await YouTubeAdapter(str(cookie_file)).health()
+        assert state.available is False
+        assert state.extra["code"] == "cookies_invalid_or_expired"
+        assert state.extra["auth"] == "not_probed"
+
+    async def test_public_probe_does_not_claim_cookie_auth_health(self, tmp_path: Path) -> None:
+        cookie_file = tmp_path / "cookies.txt"
+        cookie_file.write_text(
+            "# Netscape HTTP Cookie File\n"
+            f".youtube.com\tTRUE\t/\tTRUE\t{int(time.time()) + 3600}\tSID\tsecret\n"
+        )
+        process = MagicMock(returncode=0)
+        process.communicate = AsyncMock(
+            return_value=(json.dumps({"formats": [{"acodec": "opus"}]}).encode(), b"")
+        )
+        with (
+            patch("app.sources.youtube._ytdlp_available", return_value=True),
+            patch("app.sources.youtube.asyncio.create_subprocess_exec", return_value=process),
+        ):
+            state = await YouTubeAdapter(str(cookie_file)).health()
+        assert state.available is True
+        assert state.extra["auth"] == "unprobed"
+
 
 class TestYouTubeAcquisition:
     async def test_acquire_stages_verified_audio_with_sanitized_provenance(
@@ -113,6 +144,7 @@ class TestYouTubeAcquisition:
         with (
             patch("app.sources.youtube._ytdlp_available", return_value=True),
             patch("app.sources.youtube.asyncio.create_subprocess_exec", side_effect=spawn),
+            patch("app.sources.youtube._is_supported_audio", return_value=True),
         ):
             acquired = await YouTubeAdapter().acquire(
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ&token=secret", tmp_path
@@ -138,6 +170,56 @@ class TestYouTubeAcquisition:
         assert caught.value.code == "timeout"
         killpg.assert_called_once_with(654, signal.SIGTERM)
         assert list((tmp_path / "youtube").glob("*.partial")) == []
+
+    async def test_acquire_rejects_symlinked_staging_ancestor_without_escape(
+        self, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        linked = tmp_path / "linked"
+        linked.symlink_to(outside, target_is_directory=True)
+        with (
+            patch("app.sources.youtube._ytdlp_available", return_value=True),
+            patch("app.sources.youtube.asyncio.create_subprocess_exec") as spawn,
+            pytest.raises(ProviderError) as caught,
+        ):
+            await YouTubeAdapter().acquire(
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ", linked / "staging"
+            )
+        assert caught.value.code == "unsafe_staging"
+        spawn.assert_not_called()
+        assert list(outside.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        ("info", "artifact_name", "artifact_data"),
+        [
+            ({"ext": "m4a", "acodec": "none"}, "audio.m4a", b"<html>no audio</html>"),
+            ({"ext": "m4a", "acodec": "mp4a"}, "audio.m4a", b"corrupt"),
+            ({"ext": "m4a", "acodec": "mp4a"}, "audio.webm", b"audio"),
+        ],
+    )
+    async def test_acquire_rejects_invalid_or_metadata_mismatched_artifact(
+        self, tmp_path: Path, info: dict[str, str], artifact_name: str, artifact_data: bytes
+    ) -> None:
+        async def spawn(*args: object, **kwargs: object) -> MagicMock:
+            template = Path(args[args.index("--output") + 1])
+            artifact = template.parent / artifact_name
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(artifact_data)
+            process = MagicMock(pid=321, returncode=0)
+            process.communicate = AsyncMock(return_value=(json.dumps(info).encode(), b""))
+            return process
+
+        with (
+            patch("app.sources.youtube._ytdlp_available", return_value=True),
+            patch("app.sources.youtube.asyncio.create_subprocess_exec", side_effect=spawn),
+            pytest.raises(ProviderError) as caught,
+        ):
+            await YouTubeAdapter().acquire("https://www.youtube.com/watch?v=dQw4w9WgXcQ", tmp_path)
+        assert caught.value.code == "artifact_invalid"
+        youtube_dir = tmp_path / "youtube"
+        assert not (youtube_dir / "dQw4w9WgXcQ").exists()
+        assert list(youtube_dir.glob("*.partial")) == []
 
 
 class TestYouTubeSearch:
