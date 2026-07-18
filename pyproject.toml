@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "httpx>=0.27",
     "yt-dlp>=2024.5",
+    "tidal-dl==2022.10.31.1",
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
     "tenacity>=8.3",

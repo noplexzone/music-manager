@@ -36,8 +36,9 @@
 
       <fieldset>
         <legend>TIDAL / tidal-dl</legend>
-        <label>Profile path <input name="tidal_config_path" placeholder="/data/tidal/.tidal-dl.json"></label>
-        <label>Session token path <input name="tidal_session_path" placeholder="/data/tidal/.tidal-dl.token.json"></label>
+        <p>Direct TIDAL track URLs only. Authenticate once outside the app; both files must share a persistent directory and use the exact filenames shown.</p>
+        <label>Profile path <input name="tidal_config_path" placeholder="/app/data/tidal/.tidal-dl.json"></label>
+        <label>Session token path <input name="tidal_session_path" placeholder="/app/data/tidal/.tidal-dl.token.json"></label>
         <label>Quality
           <select name="tidal_quality">
             <option value="">Default</option>

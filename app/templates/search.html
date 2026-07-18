@@ -4,7 +4,8 @@
 {% block content %}
 <div class="page-header">
   <h1>Search</h1>
-  <p>Query is proxied to configured sources in real time.</p>
+  <p>Query configured search sources, or submit a direct TIDAL track URL when TIDAL is selected through the API.</p>
+  <p class="hint">TIDAL supports a direct TIDAL track URL only; tidal-dl does not provide catalog search.</p>
 </div>
 
 <form method="post" action="/search/ui" class="form-row" style="margin-bottom:1.5rem;">

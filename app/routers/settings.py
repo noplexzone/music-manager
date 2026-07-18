@@ -23,6 +23,7 @@ from app.settings_service import (
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
 from app.sources.slskd import SlskdAdapter
+from app.sources.tidal import TidalAdapter
 from app.sources.youtube import YouTubeAdapter
 
 router = APIRouter(tags=["settings"])
@@ -137,6 +138,13 @@ async def test_provider(
             key="",
             cookies=_r("ytdlp_cookies_file", payload.ytdlp_cookies_file),
         )
+    if payload.provider == "tidal":
+        cap = await TidalAdapter(
+            _r("tidal_config_path", payload.tidal_config_path),
+            _r("tidal_session_path", payload.tidal_session_path),
+            _r("tidal_quality", payload.tidal_quality),
+        ).health()
+        return SourceStatus(available=cap.available, reason=cap.reason, details=cap.extra)
     # Unreachable — Literal type on payload.provider prevents unknown values.
     return SourceStatus(available=False, reason="Unknown provider", details={})  # pragma: no cover
 

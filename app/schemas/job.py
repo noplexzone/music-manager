@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.models.job import JobStatus
 
-JobSource = Literal["slskd", "prowlarr", "youtube"]
+JobSource = Literal["slskd", "prowlarr", "youtube", "tidal"]
 
 
 class JobCreate(BaseModel):

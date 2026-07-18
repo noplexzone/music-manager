@@ -16,7 +16,7 @@ from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
 from app.sources.slskd import SlskdAdapter
-from app.sources.tidal_status import TIDAL_STATUS
+from app.sources.tidal import TidalAdapter
 from app.sources.youtube import YouTubeAdapter
 
 router = APIRouter()
@@ -29,6 +29,11 @@ def _build_adapters(settings: Settings) -> dict[str, SourceAdapter]:
         "prowlarr": ProwlarrAdapter(settings.prowlarr_url, settings.prowlarr_api_key),
         "sabnzbd": SabnzbdAdapter(settings.sabnzbd_url, settings.sabnzbd_api_key),
         "youtube": YouTubeAdapter(settings.ytdlp_cookies_file),
+        "tidal": TidalAdapter(
+            settings.tidal_config_path,
+            settings.tidal_session_path,
+            settings.tidal_quality,
+        ),
     }
 
 
@@ -67,12 +72,10 @@ async def health(
                 available=result.available, reason=result.reason, details=result.extra
             )
 
-    sources["tidal"] = TIDAL_STATUS
-
     db_writable = await _check_db(db)
 
-    all_available = all(s.available for name, s in sources.items() if name != "tidal")
-    none_available = not any(s.available for name, s in sources.items() if name != "tidal")
+    all_available = all(s.available for s in sources.values())
+    none_available = not any(s.available for s in sources.values())
 
     if not db_writable or none_available:
         status = "down"
@@ -109,5 +112,4 @@ async def health_sources(
                 available=result.available, reason=result.reason, details=result.extra
             )
 
-    sources["tidal"] = TIDAL_STATUS
     return sources

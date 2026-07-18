@@ -17,7 +17,7 @@ from app.schemas.job import JobCreate, JobRead, JobSource
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
-_ALLOWED_JOB_SOURCES: set[JobSource] = {"slskd", "prowlarr", "youtube"}
+_ALLOWED_JOB_SOURCES: set[JobSource] = {"slskd", "prowlarr", "youtube", "tidal"}
 
 
 def _get_templates(request: Request) -> Jinja2Templates:

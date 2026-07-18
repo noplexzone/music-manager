@@ -12,10 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added encrypted database-backed provider and library settings with environment precedence, masked secret responses, separate connection tests, and authenticated save APIs.
 - Extended first-run setup to configure acquisition, metadata, TIDAL, and library sources without requiring them to be present.
 - Added an operator Settings page with explicit provider health checks and persistent source configuration.
+- Added bounded tidal-dl acquisition for direct HTTPS TIDAL track URLs, with local profile readiness checks, verified audio artifacts, and persisted provenance.
 
 ### Security
 
 - Provider secrets are encrypted at rest and never returned to clients; settings mutations require owner/admin authorization and CSRF validation.
+- TIDAL subprocesses run without a shell or interactive input, use bounded output and timeouts, and reject unsafe profile, URL, and staging layouts.
 
 ## [0.1.2] - 2026-07-17
 

@@ -29,7 +29,7 @@ class SettingsSaveRequest(BaseModel):
     naming_template: str | None = None
 
 
-_TESTABLE_PROVIDERS = Literal["slskd", "prowlarr", "sabnzbd", "youtube"]
+_TESTABLE_PROVIDERS = Literal["slskd", "prowlarr", "sabnzbd", "youtube", "tidal"]
 
 
 class SettingsTestRequest(BaseModel):
@@ -41,3 +41,6 @@ class SettingsTestRequest(BaseModel):
     sabnzbd_url: str = ""
     sabnzbd_api_key: str = ""
     ytdlp_cookies_file: str = ""
+    tidal_config_path: str = ""
+    tidal_session_path: str = ""
+    tidal_quality: Literal["", "Normal", "High", "HiFi", "Master"] = ""

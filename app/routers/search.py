@@ -16,13 +16,14 @@ from app.settings_service import effective_settings_dep
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.slskd import SlskdAdapter
-from app.sources.tidal_status import TIDAL_STATUS
+from app.sources.tidal import TidalAdapter
 from app.sources.youtube import ProviderError, YouTubeAdapter
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
 
-_VALID_SOURCES = {"slskd", "prowlarr", "youtube"}
+_VALID_SOURCES = {"slskd", "prowlarr", "youtube", "tidal"}
+_DEFAULT_SOURCES = {"slskd", "prowlarr", "youtube"}
 
 
 def _get_templates(request: Request) -> Jinja2Templates:
@@ -36,6 +37,12 @@ def _build_adapter(name: str, settings: Settings) -> SourceAdapter | None:
         return ProwlarrAdapter(settings.prowlarr_url, settings.prowlarr_api_key)
     if name == "youtube":
         return YouTubeAdapter(settings.ytdlp_cookies_file)
+    if name == "tidal":
+        return TidalAdapter(
+            settings.tidal_config_path,
+            settings.tidal_session_path,
+            settings.tidal_quality,
+        )
     return None
 
 
@@ -81,18 +88,14 @@ async def search(
     settings: Annotated[Settings, Depends(effective_settings_dep)],
 ) -> SearchResponse:
     if req.sources == []:
-        requested = sorted(_VALID_SOURCES)
+        requested = sorted(_DEFAULT_SOURCES)
     else:
         requested = [s for s in req.sources if s in _VALID_SOURCES]
-    tidal_requested = "tidal" in req.sources
-
     tasks = [_search_source(name, settings, req) for name in requested]
     outcomes = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_results: list[SearchResult] = []
     source_states: dict[str, SourceStatus] = {}
-    if tidal_requested:
-        source_states["tidal"] = TIDAL_STATUS
 
     for outcome in outcomes:
         if isinstance(outcome, BaseException):

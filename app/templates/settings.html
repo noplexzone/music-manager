@@ -70,7 +70,7 @@
 
 <section class="card">
   <h2>TIDAL / tidal-dl</h2>
-  <p class="hint">Authentication files are stored on the persistent data mount. TIDAL acquisition is enabled in the next provider slice.</p>
+  <p class="hint">Supports a direct TIDAL track URL download through tidal-dl. Configure files named exactly <code>.tidal-dl.json</code> and <code>.tidal-dl.token.json</code> in the same persistent directory. Authenticate once with tidal-dl outside this app.</p>
   <label>Config path
     <input name="tidal_config_path" value="{{ settings.tidal_config_path.value }}"
       {% if settings.tidal_config_path.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
@@ -87,6 +87,8 @@
       {% endfor %}
     </select>
   </label>
+  <button type="button" class="secondary" data-test-provider="tidal">Test local readiness</button>
+  <span class="test-result" id="test-tidal"></span>
 </section>
 
 <section class="card">
@@ -165,6 +167,7 @@ document.querySelectorAll("[data-test-provider]").forEach((btn) => {
       prowlarr: ["prowlarr_url", "prowlarr_api_key"],
       sabnzbd: ["sabnzbd_url", "sabnzbd_api_key"],
       youtube: ["ytdlp_cookies_file"],
+      tidal: ["tidal_config_path", "tidal_session_path", "tidal_quality"],
     };
     (fieldMap[provider] || []).forEach((f) => { body[f] = formData.get(f) || ""; });
     try {

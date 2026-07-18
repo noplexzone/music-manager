@@ -27,6 +27,7 @@ from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
 from app.sources.slskd import SlskdAdapter
+from app.sources.tidal import TidalAdapter
 from app.sources.youtube import ProviderError, YouTubeAdapter
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,8 @@ async def _fetch_results(job: Job, cfg: Settings) -> list[SearchResult]:
         adapter = ProwlarrAdapter(cfg.prowlarr_url, cfg.prowlarr_api_key)
     elif job.source == "youtube":
         adapter = YouTubeAdapter(cfg.ytdlp_cookies_file)
+    elif job.source == "tidal":
+        adapter = TidalAdapter(cfg.tidal_config_path, cfg.tidal_session_path, cfg.tidal_quality)
     else:
         raise ValueError(f"Unknown source: {job.source}")
     return await adapter.search(req)
@@ -178,12 +181,19 @@ async def _fetch_results(job: Job, cfg: Settings) -> list[SearchResult]:
 async def _prepare_acquisition(
     result: SearchResult, source: str, cfg: Settings, track: Track | None = None
 ) -> tuple[str | None, str | None]:
-    if source == "youtube":
+    if source in {"youtube", "tidal"}:
         if not result.url:
-            raise ProviderError("invalid_result", "YouTube result URL is missing", "acquire")
-        acquired = await YouTubeAdapter(cfg.ytdlp_cookies_file).acquire(
-            result.url, cfg.staging_root
-        )
+            raise ProviderError("invalid_result", f"{source} result URL is missing", "acquire")
+        if source == "youtube":
+            acquired = await YouTubeAdapter(cfg.ytdlp_cookies_file).acquire(
+                result.url, cfg.staging_root
+            )
+        else:
+            acquired = await TidalAdapter(
+                cfg.tidal_config_path,
+                cfg.tidal_session_path,
+                cfg.tidal_quality,
+            ).acquire(result.url, cfg.staging_root)
         if track is not None:
             track.source_path = str(acquired.path)
             track.staging_path = str(acquired.path)

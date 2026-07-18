@@ -16,14 +16,14 @@ async def test_create_job_returns_201(client: AsyncClient) -> None:
     assert "id" in data
 
 
-async def test_create_job_rejects_tidal_and_unknown_sources(client: AsyncClient) -> None:
-    for source in ("tidal", "unknown"):
-        resp = await client.post("/jobs", json={"source": source, "query": "test track"})
-        assert resp.status_code == 422
-
-    resp = await client.get("/jobs")
-    assert resp.status_code == 200
-    assert resp.json() == []
+async def test_create_job_accepts_tidal_and_rejects_unknown_sources(client: AsyncClient) -> None:
+    tidal = await client.post(
+        "/jobs",
+        json={"source": "tidal", "query": "https://tidal.com/browse/track/123"},
+    )
+    assert tidal.status_code == 201
+    unknown = await client.post("/jobs", json={"source": "unknown", "query": "test track"})
+    assert unknown.status_code == 422
 
 
 async def test_list_jobs(client: AsyncClient) -> None:
