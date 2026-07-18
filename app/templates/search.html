@@ -30,7 +30,7 @@
   {% endif %}
 
   {% if results %}
-  <div class="card" style="padding:0;">
+  <div class="table-wrap">
     <table>
       <thead>
         <tr>
@@ -65,7 +65,7 @@
     </table>
   </div>
   {% else %}
-  <p style="color:var(--text-muted);">No results found. Try a different query or check that sources are available.</p>
+  <div class="empty-state" role="status"><h3>No results found</h3><p>Try a different query or check provider readiness in Settings.</p><a class="btn secondary" href="/settings">Check settings</a></div>
   {% endif %}
 {% endif %}
 {% endblock %}

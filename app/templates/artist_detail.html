@@ -5,8 +5,9 @@
   <a href="/artists">Artists</a> / <span aria-current="page">{{ detail.display_name }}</span>
 </nav>
 
-<div class="page-header">
-  <h1>{{ detail.display_name }}</h1>
+<div class="page-header artist-hero">
+  <div class="artist-avatar hero-avatar" aria-hidden="true">{{ detail.display_name[:1] | upper }}</div>
+  <div><p class="eyebrow">Artist</p><h1>{{ detail.display_name }}</h1>
   <p>
     {{ detail.track_count }} track{% if detail.track_count != 1 %}s{% endif %}
     across {{ detail.album_count }} album{% if detail.album_count != 1 %}s{% endif %}
@@ -16,7 +17,7 @@
     {% set m = ((detail.total_duration_sec % 3600) // 60) %}
     {% if h > 0 %}{{ h }}h {{ m }}m{% else %}{{ m }}m{% endif %}
     {% endif %}
-  </p>
+  </p></div>
 </div>
 
 {% if detail.albums %}

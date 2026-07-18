@@ -195,7 +195,8 @@ class YouTubeAdapter:
         self._cookies_file = cookies_file
         self._search_timeout_sec = search_timeout_sec
 
-    async def health(self) -> CapabilityState:
+    async def local_health(self) -> CapabilityState:
+        """Return local binary/cookie readiness without contacting YouTube."""
         if not _ytdlp_available():
             return CapabilityState(
                 available=False,
@@ -211,8 +212,13 @@ class YouTubeAdapter:
             "throttling": "not_probed",
             "audio_formats": "not_probed",
         }
-        if not valid:
-            return CapabilityState(False, reason, details)
+        return CapabilityState(valid, None if valid else reason, details)
+
+    async def health(self) -> CapabilityState:
+        local = await self.local_health()
+        if not local.available:
+            return local
+        details = dict(local.extra)
         process = await asyncio.create_subprocess_exec(
             *(self._base_command() + ["--dump-single-json", "--skip-download", _HEALTH_PROBE_URL]),
             stdout=asyncio.subprocess.PIPE,

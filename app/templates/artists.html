@@ -26,6 +26,7 @@
 <div class="artist-grid" role="list" aria-label="Artist list">
   {% for artist in artists.items %}
   <article class="artist-card" role="listitem">
+    <div class="artist-avatar avatar-{{ loop.index % 4 }}" aria-hidden="true">{{ artist.display_name[:1] | upper }}</div>
     <h2><a href="/artists/detail?name={{ artist.display_name | urlencode }}">{{ artist.display_name }}</a></h2>
     <dl class="artist-meta">
       <dt>Tracks</dt><dd>{{ artist.track_count }}</dd>

@@ -254,7 +254,8 @@ class TidalAdapter:
         self._quality = quality or "Normal"
         self._timeout_sec = timeout_sec
 
-    async def health(self) -> CapabilityState:
+    async def local_health(self) -> CapabilityState:
+        """Return local binary/profile/session readiness without network access."""
         installed = _tidal_dl_version()
         if not installed or not _tidal_dl_executable():
             return CapabilityState(
@@ -271,6 +272,9 @@ class TidalAdapter:
             "quality": self._quality,
         }
         return CapabilityState(valid, None if valid else reason, details)
+
+    async def health(self) -> CapabilityState:
+        return await self.local_health()
 
     async def search(self, query: SearchRequest) -> list[SearchResult]:
         url, track_id = _validated_track_url(query.query, "search")

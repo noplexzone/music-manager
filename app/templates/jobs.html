@@ -21,7 +21,7 @@
 </form>
 
 {% if jobs %}
-<div class="card" style="padding:0;">
+<div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -51,6 +51,6 @@
   </table>
 </div>
 {% else %}
-<p style="color:var(--text-muted);">No jobs yet. Use the form above to enqueue your first acquisition.</p>
+<div class="empty-state" role="status"><span class="empty-icon"><svg><use href="#i-jobs"/></svg></span><h3>No jobs yet</h3><p>Use the form above to enqueue your first acquisition.</p></div>
 {% endif %}
 {% endblock %}

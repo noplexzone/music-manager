@@ -1,9 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Login — Music Manager{% endblock %}
 {% block content %}
-<section class="card"><h1>Login</h1>
-<form method="post" action="/api/auth/login">
-<label>Username <input name="username" required autocomplete="username"></label>
-<label>Password <input name="password" type="password" required autocomplete="current-password"></label>
-<button type="submit">Login</button></form></section>
+<section class="card auth-card" aria-labelledby="login-heading">
+  <a class="brand auth-brand" href="/" aria-label="Music Manager home"><span class="brand-mark">MM</span><span>Music Manager</span></a>
+  <p class="eyebrow">Private library</p>
+  <h1 id="login-heading">Welcome back</h1>
+  <p>Sign in to manage your music library and acquisition queue.</p>
+  <form method="post" action="/api/auth/login">
+    <label for="login-username">Username<input id="login-username" name="username" required autocomplete="username"></label>
+    <label for="login-password">Password<input id="login-password" name="password" type="password" required autocomplete="current-password"></label>
+    <button type="submit">Sign in</button>
+  </form>
+</section>
 {% endblock %}

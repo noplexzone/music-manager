@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Settings — Music Manager{% endblock %}
 {% block content %}
-<h1>Settings</h1>
-<p class="hint">Environment variables take precedence and are locked. Leave a secret field blank to keep the existing value.</p>
+<header class="page-header">
+  <div><p class="eyebrow">Configuration</p><h1>Settings</h1><p>Manage local paths and provider connections without exposing stored credentials.</p></div>
+</header>
+<div class="alert info" role="note"><strong>Credential safety:</strong> environment values are locked and secret values remain masked. Leave a secret blank to keep it unchanged.</div>
 
 <form id="settings-form" method="post" action="/api/settings/save" data-custom-submit="true">
 

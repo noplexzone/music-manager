@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}First-run setup — Music Manager{% endblock %}
 {% block content %}
-<section class="card">
-  <h1>Create owner account</h1>
-  <p>This one-time setup creates the first owner. Provider settings are optional — you can configure them later in Settings.</p>
+<section class="card auth-card setup-card">
+  <a class="brand auth-brand" href="/" aria-label="Music Manager home"><span class="brand-mark">MM</span><span>Music Manager</span></a>
+  <p class="eyebrow">First-run setup</p>
+  <h1>Create your owner account</h1>
+  <p>Secure this private library first. Provider settings are optional and can be changed later.</p>
   <form id="setup-form" method="post" action="/api/auth/setup" data-custom-submit="true">
     <label>Username <input name="username" required maxlength="64" autocomplete="username"></label>
     <label>Password <input name="password" type="password" required minlength="14" autocomplete="new-password"></label>
@@ -64,7 +66,7 @@
       </fieldset>
     </details>
 
-    <button type="submit">Create owner &amp; continue</button>
+    <button type="submit">Create owner &amp; open library</button>
   </form>
 </section>
 <script>

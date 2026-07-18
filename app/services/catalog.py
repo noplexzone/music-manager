@@ -159,7 +159,7 @@ def _normalize_album(t: Track) -> str:
     return t.album or UNKNOWN
 
 
-def _to_track_row(t: Track) -> TrackRow:
+def to_track_row(t: Track) -> TrackRow:
     return TrackRow(
         id=t.id,
         title=_normalize_title(t),
@@ -318,7 +318,7 @@ async def list_library_tracks(
     rows = list((await db.execute(data_stmt)).scalars().all())
 
     return Page(
-        items=[_to_track_row(r) for r in rows],
+        items=[to_track_row(r) for r in rows],
         total=total,
         page=page,
         per_page=per_page,
@@ -523,7 +523,7 @@ async def get_artist_detail(
                 country=rel.country if rel else None,
                 catalog_number=rel.catalog_number if rel else None,
             )
-        album_map[key].tracks.append(_to_track_row(t))
+        album_map[key].tracks.append(to_track_row(t))
 
     total_pages = max(1, math.ceil(total_tracks / per_page))
 

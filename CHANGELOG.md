@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a data-backed dashboard with bounded library totals, recent tracks and jobs, job-state counts, provider readiness, and truthful empty states.
+- Added a responsive application shell with desktop and mobile navigation, accessible active states, reusable cards, forms, badges, empty states, and consistent styling across the dashboard, search, library, artists, jobs, imports, settings, setup, login, and track views.
+
 - Added read-only Library page (`/library`) with aggregate stats (track count, artists, albums, total duration, total size, format and source breakdowns), text/artist/album/source/format filtering, deterministic sorting, and bounded pagination backed by real Track data.
 - Added Artists page (`/artists`) grouping tracks by `album_artist` (falling back to `artist`), with track/album/duration aggregates, per-artist format badges, search, sort, and pagination. Artist-detail view (`/artists/detail?name=…`) shows tracks grouped by album with release metadata (MBID, label, country, catalog number) and paginated track listing.
 - Tracks with no artist information appear as "Unknown" throughout library stats, listing, and artist detail; `/artists/detail?name=Unknown` works correctly.
