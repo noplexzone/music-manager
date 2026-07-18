@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -462,6 +463,11 @@ async def execute_release_import(
             track.import_state = ImportWorkflowState.imported
             with pinned.open_read(pinned.name) as imported_file:
                 track.content_sha256 = _sha256_fileobj(imported_file)
+                with contextlib.suppress(OSError):
+                    track.file_size_bytes = os.fstat(imported_file.fileno()).st_size
+            ext = destination.suffix.lower().lstrip(".")
+            if ext and len(ext) <= 16 and ext.isalnum():
+                track.file_format = ext
             plan.status = ImportWorkflowState.imported
             plan.collision_state = CollisionState.clear
         release.import_state = ImportWorkflowState.imported

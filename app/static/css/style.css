@@ -264,3 +264,190 @@ pre code { background: none; border: none; padding: 0; font-size: 0.85rem; }
   main { padding: 1rem; }
   .form-row { flex-direction: column; }
 }
+
+/* ── Catalog: stats strip ── */
+.catalog-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1.25rem;
+  min-width: 110px;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 0.2rem;
+}
+
+.stat-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.stat-fmt-count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-right: 0.35rem;
+}
+
+/* ── Catalog: filter bar ── */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.filter-bar input[type="search"],
+.filter-bar input[type="text"] { min-width: 160px; }
+
+.filter-bar select { min-width: 120px; }
+
+/* ── Catalog: table wrapper ── */
+.catalog-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+}
+
+.catalog-table-wrap table { margin-bottom: 0; }
+
+.track-no { color: var(--text-muted); text-align: right; width: 2.5rem; }
+
+/* ── Catalog: pagination ── */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.pagination-info {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.btn.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+}
+
+/* ── Catalog: empty state ── */
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-muted);
+}
+
+.empty-state p { margin-bottom: 0.75rem; }
+
+/* ── Artists: grid ── */
+.artist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.artist-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+
+.artist-card h2 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+  word-break: break-word;
+}
+
+.artist-card h2 a { color: var(--text); }
+.artist-card h2 a:hover { color: var(--accent); }
+
+.artist-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+  font-size: 0.82rem;
+}
+
+.artist-meta dt { color: var(--text-muted); }
+.artist-meta dd { color: var(--text); }
+
+/* ── Artist detail ── */
+.breadcrumb {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.breadcrumb a { color: var(--text-muted); }
+.breadcrumb a:hover { color: var(--accent); }
+
+.album-section { margin-bottom: 2rem; }
+
+.album-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.album-header h2 { font-size: 1.05rem; font-weight: 600; }
+
+.album-year {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* ── Utility ── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .catalog-stats { gap: 0.5rem; }
+  .filter-bar { flex-direction: column; align-items: stretch; }
+  .artist-grid { grid-template-columns: 1fr; }
+  .pagination { justify-content: center; }
+}

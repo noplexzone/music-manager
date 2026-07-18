@@ -15,6 +15,7 @@ from app.auth import get_current_user, setup_complete
 from app.config import get_settings
 from app.database import get_db
 from app.routers import auth, health, imports, jobs, naming, search, tracks
+from app.routers import catalog as catalog_router
 from app.routers import settings as settings_router
 
 _TEMPLATES_DIR = files("app") / "templates"
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, tags=["health"])
     app.include_router(auth.router, tags=["auth"])
+    app.include_router(catalog_router.router, tags=["catalog"])
     app.include_router(search.router, tags=["search"])
     app.include_router(settings_router.router, tags=["settings"])
     app.include_router(jobs.router, tags=["jobs"])

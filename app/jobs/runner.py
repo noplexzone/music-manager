@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -199,6 +200,12 @@ async def _prepare_acquisition(
             track.staging_path = str(acquired.path)
             track.acquisition_state = AcquisitionState.downloaded
             track.acquisition_provenance_json = json.dumps(acquired.provenance, sort_keys=True)
+            with contextlib.suppress(OSError):
+                st = await asyncio.to_thread(acquired.path.stat)
+                track.file_size_bytes = st.st_size
+                suffix = acquired.path.suffix.lower().lstrip(".")
+                if suffix and len(suffix) <= 16 and suffix.isalnum():
+                    track.file_format = suffix
         return None, "downloaded"
     if source != "prowlarr":
         if track is not None:

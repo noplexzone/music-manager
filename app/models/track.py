@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -72,6 +73,11 @@ class Track(Base):
     staging_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     acquisition_provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_format: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    file_metadata_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     fingerprint_state: Mapped[FingerprintState] = mapped_column(
         Enum(FingerprintState),
         nullable=False,
