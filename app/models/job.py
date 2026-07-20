@@ -19,6 +19,7 @@ class JobStatus(StrEnum):
     running = "running"
     done = "done"
     failed = "failed"
+    partial = "partial"
     cancelled = "cancelled"
 
 
@@ -41,6 +42,7 @@ class Job(Base):
         nullable=False,
     )
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selected_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     tracks: Mapped[list[Track]] = relationship(
         "Track", back_populates="job", cascade="all, delete-orphan"

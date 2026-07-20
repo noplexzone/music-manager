@@ -7,9 +7,11 @@ from app.models.monitoring import MonitoringRecord
 from app.models.path_preview import PathPreview
 from app.models.release import Release
 from app.models.release_candidate import MatchReviewState, ReleaseCandidate
+from app.models.settings import AppSetting
 from app.models.track import Track
 
 __all__ = [
+    "AppSetting",
     "AppUser",
     "AuthSession",
     "ImportPlan",

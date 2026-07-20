@@ -7,11 +7,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.config import Settings, get_settings
+from app.database import get_db
 from app.schemas.health import SourceStatus
 from app.schemas.search import SearchRequest, SearchResponse, SearchResult
+from app.settings_service import get_runtime_settings
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.slskd import SlskdAdapter
@@ -78,11 +81,15 @@ async def _search_source(
 async def search(
     req: SearchRequest,
     settings: Annotated[Settings, Depends(get_settings)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> SearchResponse:
+    runtime = await get_runtime_settings(db)
     if req.sources == []:
-        requested = sorted(_VALID_SOURCES)
+        requested = [s for s in runtime.enabled_sources if s in _VALID_SOURCES]
     else:
-        requested = [s for s in req.sources if s in _VALID_SOURCES]
+        requested = [
+            s for s in req.sources if s in _VALID_SOURCES and s in runtime.enabled_sources
+        ]
     tidal_requested = "tidal" in req.sources
 
     tasks = [_search_source(name, settings, req) for name in requested]
@@ -101,6 +108,8 @@ async def search(
         all_results.extend(results)
         source_states[name] = state
 
+    priority = {name: index for index, name in enumerate(requested)}
+    all_results.sort(key=lambda r: priority.get(r.source, 999))
     return SearchResponse(results=all_results, source_states=source_states)
 
 
@@ -110,7 +119,7 @@ async def search_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "search.html",
-        {"results": None, "query": "", "error": None},
+        {"results": None, "query": "", "artist": "", "album": "", "track": "", "error": None},
     )
 
 
@@ -118,22 +127,45 @@ async def search_page(request: Request) -> HTMLResponse:
 async def search_ui(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> HTMLResponse:
     templates = _get_templates(request)
     form = await request.form()
     query_str = str(form.get("query", "")).strip()
-    sources_raw = str(form.get("sources", "slskd,prowlarr,youtube"))
-    sources = [s.strip() for s in sources_raw.split(",") if s.strip() in _VALID_SOURCES]
+    artist = str(form.get("artist", "")).strip()
+    album = str(form.get("album", "")).strip()
+    track = str(form.get("track", "")).strip()
+    runtime = await get_runtime_settings(db)
+    sources_raw = str(form.get("sources", ",".join(runtime.enabled_sources)))
+    sources = [
+        s.strip()
+        for s in sources_raw.split(",")
+        if s.strip() in _VALID_SOURCES and s.strip() in runtime.enabled_sources
+    ]
 
-    if not query_str:
+    if not (query_str or artist or album or track):
         return templates.TemplateResponse(
             request,
             "search.html",
-            {"results": None, "query": "", "error": "Query is required"},
+            {
+                "results": None,
+                "query": "",
+                "artist": artist,
+                "album": album,
+                "track": track,
+                "error": "At least one search field is required",
+            },
         )
 
-    req = SearchRequest(query=query_str, sources=sources)
-    tasks = [_search_source(name, settings, req) for name in (sources or sorted(_VALID_SOURCES))]
+    req = SearchRequest(
+        query=query_str,
+        artist=artist or None,
+        album=album or None,
+        track=track or None,
+        sources=sources,
+    )
+    ordered_sources = sources or [s for s in runtime.enabled_sources if s in _VALID_SOURCES]
+    tasks = [_search_source(name, settings, req) for name in ordered_sources]
     outcomes = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_results: list[SearchResult] = []
@@ -144,6 +176,8 @@ async def search_ui(
         name, results, state = outcome
         all_results.extend(results)
         source_states[name] = state
+    priority = {name: index for index, name in enumerate(ordered_sources)}
+    all_results.sort(key=lambda r: priority.get(r.source, 999))
 
     return templates.TemplateResponse(
         request,
@@ -152,6 +186,9 @@ async def search_ui(
             "results": all_results,
             "source_states": source_states,
             "query": query_str,
+            "artist": artist,
+            "album": album,
+            "track": track,
             "error": None,
         },
     )

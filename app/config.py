@@ -46,9 +46,15 @@ class Settings(BaseSettings):
     # yt-dlp
     ytdlp_cookies_file: str = ""
 
+    # TIDAL-DL backend (disabled by default)
+    tidal_enabled: bool = False
+    tidal_backend_url: str = ""
+    tidal_backend_path: Path = Path("")
+    tidal_staging_dir: Path = Path("")
+
     # MusicBrainz
     musicbrainz_app_name: str = "music-manager"
-    musicbrainz_app_version: str = "0.1.2"
+    musicbrainz_app_version: str = "0.1.3"
     musicbrainz_contact: str = ""
 
     # Deezer

@@ -15,6 +15,7 @@ from app.auth import get_current_user, setup_complete
 from app.config import get_settings
 from app.database import get_db
 from app.routers import auth, health, imports, jobs, naming, search, tracks
+from app.routers import settings as settings_router
 
 _TEMPLATES_DIR = files("app") / "templates"
 _STATIC_DIR = files("app") / "static"
@@ -32,7 +33,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Music Manager",
-        version="0.1.2",
+        version="0.1.3",
         description="Self-hosted music acquisition and library management",
         docs_url="/api/docs",
         redoc_url="/api/redoc",
@@ -44,7 +45,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router, tags=["health"])
     app.include_router(auth.router, tags=["auth"])
     app.include_router(search.router, tags=["search"])
-    app.include_router(jobs.router, tags=["jobs"])
+    app.include_router(settings_router.router, tags=["settings"])
+    app.include_router(jobs.router, tags=["jobs", "downloads"])
     app.include_router(tracks.router, tags=["tracks"])
     app.include_router(naming.router, tags=["naming"])
     app.include_router(imports.router, tags=["imports"])

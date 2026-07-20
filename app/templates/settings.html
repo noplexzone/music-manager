@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Settings – Music Manager{% endblock %}
+{% block content %}
+<div class="page-header"><h1>Settings</h1><p>Runtime configuration for downloads.</p></div>
+<form method="post" action="/settings" class="card">
+  <h2>Download source priority</h2>
+  <p style="color:var(--text-muted);">Rows are attempted top-to-bottom for free-text downloads. Disabled sources are skipped.</p>
+  {% for item in settings.source_priority %}
+  <div class="form-row" style="align-items:center; margin-bottom:.5rem; opacity:{{ 1 if item.enabled else .55 }};">
+    <input type="hidden" name="source_order" value="{{ item.name }}">
+    <label style="min-width:120px;"><input type="checkbox" name="source_enabled" value="{{ item.name }}" {% if item.enabled %}checked{% endif %}> {{ item.name }}</label>
+  </div>
+  {% endfor %}
+  <label>Free-text download result cap <input type="number" name="free_text_result_limit" min="1" max="100" value="{{ settings.free_text_result_limit }}"></label>
+  <div style="margin-top:1rem;"><button type="submit" class="btn">Save settings</button></div>
+</form>
+{% endblock %}

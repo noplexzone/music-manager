@@ -8,7 +8,7 @@ A private, self-hosted FastAPI application that coordinates music acquisition fr
 
 ### Sources
 - **slskd**, **Prowlarr+SABnzbd**, and **YouTube** are the only acquisition sources in scope for v0.1.0.
-- **TIDAL is unavailable** until a supported, authenticated downloader exists. Do not stub, mock, simulate, or add a no-op TIDAL adapter. Do not add TIDAL acquisition code in any form until the underlying integration is real and tested.
+- **TIDAL support is delegated to an operator-installed, authenticated Tidal-DL backend.** Music Manager must never stub, mock, simulate, or synthesize TIDAL results; the TIDAL source reports `unavailable` with a clear reason until the backend is configured and passes a live health check. The operator is responsible for the rights/subscription required by their downloader.
 - New sources must implement the `SourceAdapter` protocol and declare their capability state; capability states are surfaced to the UI without hiding failures.
 
 ### Metadata
@@ -58,7 +58,7 @@ A private, self-hosted FastAPI application that coordinates music acquisition fr
 
 ## Out of scope for v0.1.0
 - File moves or library reorganisation
-- TIDAL acquisition
+- In-process TIDAL credential handling or simulated TIDAL acquisition
 - External task broker
 - Front-end JavaScript framework (Jinja2 templates only)
 - Multi-user authentication
