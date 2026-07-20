@@ -2,9 +2,10 @@
 {% block title %}Track #{{ track.id }} – Music Manager{% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <h1>{{ track.title or "Unknown Track" }}</h1>
-  <p>Track #{{ track.id }} from job #{{ track.job_id }} via <strong>{{ track.source }}</strong></p>
+<div class="page-header track-hero">
+  <div class="cover-tile hero-cover" aria-hidden="true">{{ (track.album_artist or track.artist or 'T')[:1] | upper }}</div>
+  <div><p class="eyebrow">Track details</p><h1>{{ track.title or "Unknown Track" }}</h1>
+  <p>Track #{{ track.id }} from job #{{ track.job_id }} via <strong>{{ track.source }}</strong></p></div>
 </div>
 
 <div class="card-grid">

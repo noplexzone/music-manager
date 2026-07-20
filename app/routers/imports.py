@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, require_mutation
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.database import get_db
 from app.models.import_plan import ImportPlan
 from app.models.release import Release
@@ -18,6 +18,7 @@ from app.services.library_import import (
     execute_release_import,
     plan_release_import,
 )
+from app.settings_service import effective_settings_dep
 
 router = APIRouter(prefix="/imports", dependencies=[Depends(get_current_user)])
 
@@ -56,7 +57,7 @@ async def list_import_plans(
 async def plan_release(
     release_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
     _user: Annotated[object, Depends(require_mutation)],
 ) -> list[dict[str, object]]:
     release = await db.get(Release, release_id)
@@ -72,7 +73,7 @@ async def plan_release(
 async def execute_release(
     release_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
     _user: Annotated[object, Depends(require_mutation)],
 ) -> list[dict[str, object]]:
     release = await db.get(Release, release_id)
@@ -89,7 +90,7 @@ async def execute_release(
 async def plan_release_from_review(
     release_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
     _user: Annotated[object, Depends(require_mutation)],
 ) -> RedirectResponse:
     release = await db.get(Release, release_id)
@@ -105,7 +106,7 @@ async def plan_release_from_review(
 async def execute_release_from_review(
     release_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
     _user: Annotated[object, Depends(require_mutation)],
 ) -> RedirectResponse:
     release = await db.get(Release, release_id)

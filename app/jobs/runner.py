@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -23,11 +24,12 @@ from app.models.track import FingerprintState, IdentityResolutionState, Track
 from app.models.workflow import AcquisitionState
 from app.naming.convention import NamingError, render_path
 from app.schemas.search import SearchRequest, SearchResult
-from app.settings_service import DEFAULT_FREE_TEXT_RESULT_LIMIT
+from app.settings_service import DEFAULT_FREE_TEXT_RESULT_LIMIT, build_effective_settings
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
 from app.sources.slskd import SlskdAdapter
+from app.sources.tidal import TidalAdapter
 from app.sources.youtube import ProviderError, YouTubeAdapter
 
 logger = logging.getLogger(__name__)
@@ -40,10 +42,10 @@ def _now() -> datetime:
 async def run_job(
     job_id: int, db: AsyncSession | None = None, settings: Settings | None = None
 ) -> None:
-    cfg = settings or get_settings()
     if db is None:
         factory = get_session_factory()
         async with factory() as session:
+            cfg = settings or await build_effective_settings(session, get_settings())
             try:
                 await _run_job_in_session(job_id, session, cfg)
                 await session.commit()
@@ -55,6 +57,7 @@ async def run_job(
                 raise
         return
 
+    cfg = settings or await build_effective_settings(db, get_settings())
     await _run_job_in_session(job_id, db, cfg)
 
 
@@ -187,6 +190,8 @@ async def _fetch_results(
         adapter = ProwlarrAdapter(cfg.prowlarr_url, cfg.prowlarr_api_key)
     elif job.source == "youtube":
         adapter = YouTubeAdapter(cfg.ytdlp_cookies_file)
+    elif job.source == "tidal":
+        adapter = TidalAdapter(cfg.tidal_config_path, cfg.tidal_session_path, cfg.tidal_quality)
     else:
         raise ValueError(f"Unknown source: {job.source}")
     return (await adapter.search(req))[:limit]
@@ -195,17 +200,30 @@ async def _fetch_results(
 async def _prepare_acquisition(
     result: SearchResult, source: str, cfg: Settings, track: Track | None = None
 ) -> tuple[str | None, str | None]:
-    if source == "youtube":
+    if source in {"youtube", "tidal"}:
         if not result.url:
-            raise ProviderError("invalid_result", "YouTube result URL is missing", "acquire")
-        acquired = await YouTubeAdapter(cfg.ytdlp_cookies_file).acquire(
-            result.url, cfg.staging_root
-        )
+            raise ProviderError("invalid_result", f"{source} result URL is missing", "acquire")
+        if source == "youtube":
+            acquired = await YouTubeAdapter(cfg.ytdlp_cookies_file).acquire(
+                result.url, cfg.staging_root
+            )
+        else:
+            acquired = await TidalAdapter(
+                cfg.tidal_config_path,
+                cfg.tidal_session_path,
+                cfg.tidal_quality,
+            ).acquire(result.url, cfg.staging_root)
         if track is not None:
             track.source_path = str(acquired.path)
             track.staging_path = str(acquired.path)
             track.acquisition_state = AcquisitionState.downloaded
             track.acquisition_provenance_json = json.dumps(acquired.provenance, sort_keys=True)
+            with contextlib.suppress(OSError):
+                st = await asyncio.to_thread(acquired.path.stat)
+                track.file_size_bytes = st.st_size
+                suffix = acquired.path.suffix.lower().lstrip(".")
+                if suffix and len(suffix) <= 16 and suffix.isalnum():
+                    track.file_format = suffix
         return None, "downloaded"
     if source == "slskd":
         username = str(result.metadata.get("username") or "")

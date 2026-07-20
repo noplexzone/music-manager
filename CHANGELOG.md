@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added filename metadata parsing, fielded artist/album/track search, escaped MusicBrainz Lucene queries, source-priority settings, selected-result download creation, slskd transfer enqueue/status/cancel support, and TIDAL-DL operator documentation.
+- Added a data-backed dashboard with bounded library totals, recent tracks and jobs, job-state counts, provider readiness, and truthful empty states.
+- Added a responsive application shell with desktop and mobile navigation, accessible active states, reusable cards, forms, badges, empty states, and consistent styling across the dashboard, search, library, artists, jobs, imports, settings, setup, login, and track views.
+- Added read-only Library page (`/library`) with aggregate stats (track count, artists, albums, total duration, total size, format and source breakdowns), text/artist/album/source/format filtering, deterministic sorting, and bounded pagination backed by real Track data.
+- Added Artists page (`/artists`) grouping tracks by `album_artist` (falling back to `artist`), with track/album/duration aggregates, per-artist format badges, search, sort, and pagination. Artist-detail view (`/artists/detail?name=…`) shows tracks grouped by album with release metadata (MBID, label, country, catalog number) and paginated track listing.
+- Tracks with no artist information appear as "Unknown" throughout library stats, listing, and artist detail; `/artists/detail?name=Unknown` works correctly.
+- Added `file_format` and `file_size_bytes` columns to `Track` (migration 0007) and populate them after YouTube/TIDAL acquisition and atomic import. Library stats use SQL-aggregated totals from these persisted columns; no per-page filesystem reads.
+- Added bounded startup reconciliation for legacy track format/size metadata; it reads only regular non-symlink files beneath configured library or staging roots.
+- Updated global navigation to include Library and Artists links.
+- Added encrypted database-backed provider and library settings with environment precedence, masked secret responses, separate connection tests, and authenticated save APIs.
+- Extended first-run setup to configure acquisition, metadata, TIDAL, and library sources without requiring them to be present.
+- Added an operator Settings page with explicit provider health checks and persistent source configuration.
+- Added bounded tidal-dl acquisition for direct HTTPS TIDAL track URLs, with local profile readiness checks, verified audio artifacts, and persisted provenance.
 
 ### Changed
 
@@ -19,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Fixed slskd search metadata population, Prowlarr music-category scoping, slskd missing-search-id handling, selected Enqueue behavior, unsafe search-template escaping, and low-confidence MusicBrainz enrichment churn.
+- Library format breakdown and total size now use SQL `GROUP BY` on the persisted `file_format` and `SUM` of `file_size_bytes` columns instead of unbounded Python source-path iteration.
+- Artist detail uses `selectinload` on the Release relationship to avoid N+1 queries; album groups are keyed by `release_id` for stable identity across releases sharing an album name.
+- Artist format counts use a single bounded `GROUP BY` query scoped to the current page's artists only, compatible with SQLite and PostgreSQL.
+- Page parameters on all catalog routes validated with `le=10_000` (422 for out-of-range values); pages beyond the last are clamped to the last valid page rather than returning empty results.
+- Artist detail track list uses the persisted `track_no` field for track numbering instead of loop index.
+
+### Security
+
+- Provider secrets are encrypted at rest and never returned to clients; settings mutations require owner/admin authorization and CSRF validation.
+- TIDAL subprocesses run without a shell or interactive input, use bounded output and timeouts, and reject unsafe profile, URL, and staging layouts.
 
 ## [0.1.2] - 2026-07-17
 

@@ -1,71 +1,72 @@
 {% extends "base.html" %}
-{% block title %}Dashboard – Music Manager{% endblock %}
-
+{% block title %}Dashboard — Music Manager{% endblock %}
 {% block content %}
-<div class="page-header">
-  <h1>Dashboard</h1>
-  <p>Source availability is checked live on each page load.</p>
+<header class="page-header dashboard-heading">
+  <div><p class="eyebrow">Overview</p><h1>Your music, at a glance</h1><p>Real library and acquisition activity from this server.</p></div>
+  <a class="btn" href="/search"><svg><use href="#i-search"/></svg>Find music</a>
+</header>
+
+<section class="stats-grid" aria-label="Library totals">
+  <a class="metric-card" href="/library"><span class="metric-icon"><svg><use href="#i-library"/></svg></span><span class="metric-value" data-stat="tracks">{{ dashboard.library.track_count }}</span><span class="metric-label">Tracks</span></a>
+  <a class="metric-card" href="/artists"><span class="metric-monogram" aria-hidden="true">A</span><span class="metric-value" data-stat="artists">{{ dashboard.library.artist_count }}</span><span class="metric-label">Artists</span></a>
+  <a class="metric-card" href="/library"><span class="metric-monogram alt" aria-hidden="true">LP</span><span class="metric-value" data-stat="albums">{{ dashboard.library.album_count }}</span><span class="metric-label">Albums</span></a>
+  <div class="metric-card"><span class="metric-monogram soft" aria-hidden="true">⏱</span><span class="metric-value">{% set hours = dashboard.library.total_duration_sec // 3600 %}{% if hours %}{{ hours }}h{% else %}{{ dashboard.library.total_duration_sec // 60 }}m{% endif %}</span><span class="metric-label">Listening time</span></div>
+</section>
+
+<div class="dashboard-grid">
+  <section class="panel recent-panel" aria-labelledby="recent-heading">
+    <div class="section-heading"><div><p class="eyebrow">Library</p><h2 id="recent-heading">Recent activity</h2></div><a href="/library">View library</a></div>
+    {% if dashboard.recent_tracks %}
+    <div class="media-list">
+      {% for track in dashboard.recent_tracks %}
+      <a class="media-row" href="/tracks/{{ track.id }}/ui">
+        <span class="cover-tile cover-{{ loop.index % 4 }}" aria-hidden="true">{{ track.artist[:1] | upper }}</span>
+        <span class="media-copy"><strong>{{ track.title }}</strong><small>{{ track.artist }} · {{ track.album }}</small></span>
+        <span class="badge {{ 'ok' if track.import_state == 'imported' else 'warn' }}">{{ track.import_state | replace('_', ' ') }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state compact"><span class="empty-icon"><svg><use href="#i-library"/></svg></span><h3>No tracks in your library yet</h3><p>Search a configured source or create an acquisition job to begin.</p><a class="btn secondary" href="/search">Search sources</a></div>
+    {% endif %}
+  </section>
+
+  <aside class="dashboard-side">
+    <section class="panel" aria-labelledby="jobs-heading">
+      <div class="section-heading"><div><p class="eyebrow">Pipeline</p><h2 id="jobs-heading">Jobs</h2></div><a href="/jobs/ui/list">View all</a></div>
+      <div class="status-strip" aria-label="Job state counts">
+        {% for status in ['running', 'pending', 'done', 'failed', 'cancelled'] %}
+        <div><span class="status-dot {{ status }}"></span><strong data-job-status="{{ status }}">{{ dashboard.job_counts[status] }}</strong><small>{{ status | title }}</small></div>
+        {% endfor %}
+      </div>
+      {% if dashboard.recent_jobs %}
+      <ul class="job-list">
+        {% for job in dashboard.recent_jobs[:4] %}
+        <li><span class="status-dot {{ job.status.value }}"></span><span><strong>{{ job.query }}</strong><small>{{ job.source }} · {{ job.status.value | title }}</small></span></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="empty-state mini"><h3>No acquisition jobs yet</h3><p>Queue a search or direct source URL.</p></div>
+      {% endif %}
+    </section>
+
+    <section class="panel" aria-labelledby="providers-heading">
+      <div class="section-heading"><div><p class="eyebrow">Connections</p><h2 id="providers-heading">Provider readiness</h2></div><a href="/settings">Configure</a></div>
+      <ul class="provider-list">
+        {% for provider in dashboard.providers %}
+        <li><span class="provider-mark">{{ provider.name[:1] }}</span><span><strong>{{ provider.name }}</strong><small>{{ provider.detail }}</small></span><span class="badge {{ 'ok' if provider.configured else 'warn' }}">{{ 'Ready' if provider.configured else 'Setup needed' }}</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+  </aside>
 </div>
 
-<section>
-  <h2 style="font-size:1rem; color:var(--text-muted); margin-bottom:1rem;">Source status</h2>
-
-  <div id="source-status-loading" style="color:var(--text-muted); font-size:0.9rem;">
-    Checking sources&hellip;
+<section class="quick-actions" aria-labelledby="quick-heading">
+  <div class="section-heading"><div><p class="eyebrow">Shortcuts</p><h2 id="quick-heading">Quick actions</h2></div></div>
+  <div class="action-grid">
+    <a class="action-card" href="/search"><svg><use href="#i-search"/></svg><span><strong>Search providers</strong><small>Find tracks and releases</small></span><span aria-hidden="true">→</span></a>
+    <a class="action-card" href="/jobs/ui/list"><svg><use href="#i-jobs"/></svg><span><strong>Queue a job</strong><small>Start an acquisition</small></span><span aria-hidden="true">→</span></a>
+    <a class="action-card" href="/imports/ui/review"><svg><use href="#i-import"/></svg><span><strong>Review imports</strong><small>Plan and verify files</small></span><span aria-hidden="true">→</span></a>
   </div>
-
-  <div id="source-grid" class="source-grid" style="display:none"></div>
 </section>
-
-<section style="margin-top:2.5rem;">
-  <h2 style="font-size:1rem; color:var(--text-muted); margin-bottom:1rem;">Quick search</h2>
-  <form method="post" action="/search/ui" class="form-row">
-    <input type="text" name="query" placeholder="Artist, album or track&hellip;" style="flex:1; min-width:220px;" required>
-    <input type="hidden" name="sources" value="slskd,prowlarr,youtube">
-    <button type="submit" class="btn">Search</button>
-  </form>
-</section>
-
-<section style="margin-top:2.5rem;">
-  <h2 style="font-size:1rem; color:var(--text-muted); margin-bottom:1rem;">Enqueue acquisition job</h2>
-  <form method="post" action="/jobs/ui/create" class="form-row">
-    <input type="text" name="query" placeholder="Track or album query" style="flex:1; min-width:220px;" required>
-    <select name="source">
-      <option value="slskd">slskd (Soulseek)</option>
-      <option value="prowlarr">Prowlarr (Usenet)</option>
-      <option value="youtube">YouTube</option>
-    </select>
-    <button type="submit" class="btn">Enqueue</button>
-  </form>
-</section>
-
-<script>
-(async () => {
-  try {
-    const res = await fetch("/health/sources");
-    const data = await res.json();
-    const grid = document.getElementById("source-grid");
-    const loading = document.getElementById("source-status-loading");
-    const order = ["slskd","prowlarr","sabnzbd","youtube","tidal"];
-    const names = order.filter(k => k in data).concat(Object.keys(data).filter(k => !order.includes(k)));
-    names.forEach(name => {
-      const s = data[name];
-      const card = document.createElement("div");
-      card.className = "source-card";
-      const bclass = s.available ? "ok" : (name === "tidal" ? "warn" : "error");
-      const blabel = s.available ? "Available" : "Unavailable";
-      card.innerHTML = `
-        <div class="source-name">${name}</div>
-        <div><span class="badge ${bclass}"><span class="dot"></span>${blabel}</span></div>
-        ${s.reason ? `<div class="reason">${s.reason}</div>` : ""}
-      `;
-      grid.appendChild(card);
-    });
-    loading.style.display = "none";
-    grid.style.display = "grid";
-  } catch (e) {
-    document.getElementById("source-status-loading").textContent = "Failed to load source status.";
-  }
-})();
-</script>
 {% endblock %}

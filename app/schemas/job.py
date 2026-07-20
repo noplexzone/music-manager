@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from app.models.job import JobStatus
 from app.schemas.search import SearchResult
 
-JobSource = Literal["slskd", "prowlarr", "youtube"]
+JobSource = Literal["slskd", "prowlarr", "youtube", "tidal"]
 
 
 class SelectedResultPayload(SearchResult):

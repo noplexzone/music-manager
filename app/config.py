@@ -46,15 +46,9 @@ class Settings(BaseSettings):
     # yt-dlp
     ytdlp_cookies_file: str = ""
 
-    # TIDAL-DL backend (disabled by default)
-    tidal_enabled: bool = False
-    tidal_backend_url: str = ""
-    tidal_backend_path: Path = Path("")
-    tidal_staging_dir: Path = Path("")
-
     # MusicBrainz
     musicbrainz_app_name: str = "music-manager"
-    musicbrainz_app_version: str = "0.1.3"
+    musicbrainz_app_version: str = "0.2.0"
     musicbrainz_contact: str = ""
 
     # Deezer
@@ -62,6 +56,11 @@ class Settings(BaseSettings):
 
     # AcoustID
     acoustid_api_key: str = ""
+
+    # TIDAL / tidal-dl — disabled by default; enable via source-priority runtime settings
+    tidal_config_path: str = ""
+    tidal_session_path: str = ""
+    tidal_quality: Literal["", "Normal", "High", "HiFi", "Master"] = ""
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
