@@ -6,8 +6,10 @@ import logging
 import httpx
 
 from app.http import request_with_retry
+from app.metadata.filename_parse import compose_search_query, parse_filename
 from app.schemas.search import SearchRequest, SearchResult
 from app.sources.base import CapabilityState
+from app.sources.youtube import ProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +53,21 @@ class SlskdAdapter:
                 client,
                 "POST",
                 "/api/v0/searches",
-                json={"searchText": query.query, "fileLimit": 100},
+                json={
+                    "searchText": compose_search_query(
+                        query.query, query.artist, query.album, query.track
+                    ),
+                    "fileLimit": 100,
+                },
             )
             resp.raise_for_status()
             search_id = resp.json().get("id") or resp.json().get("searchId", "")
+            if not search_id:
+                raise ProviderError(
+                    "missing_search_id",
+                    "slskd create-search response did not include an id",
+                    "search",
+                )
 
             elapsed = 0.0
             while elapsed < _SEARCH_TIMEOUT_SEC:
@@ -80,19 +93,70 @@ class SlskdAdapter:
                 for f in response.get("files", []):
                     filename: str = f.get("filename", "")
                     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                    guess = parse_filename(filename)
                     results.append(
                         SearchResult(
                             source="slskd",
-                            title=filename.rsplit("/", 1)[-1] if "/" in filename else filename,
+                            title=guess.title,
+                            artist=guess.artist,
+                            album=guess.album,
                             size_bytes=f.get("size"),
                             format=ext or None,
                             url=f"slskd://{username}/{filename}",
                             metadata={
                                 "username": username,
                                 "filename": filename,
+                                "parse_confidence": guess.confidence,
+                                "parse_hints": list(guess.hints),
                                 "bit_rate": f.get("bitRate"),
                                 "sample_rate": f.get("sampleRate"),
                             },
                         )
                     )
             return results
+
+    async def enqueue(self, username: str, filename: str, size: int | None = None) -> str:
+        if not username or not filename:
+            raise ProviderError(
+                "invalid_result", "slskd result is missing username or filename", "acquire"
+            )
+        payload: dict[str, object] = {"filename": filename}
+        if size is not None:
+            payload["size"] = size
+        async with self._client() as client:
+            resp = await request_with_retry(
+                client, "POST", f"/api/v0/transfers/downloads/{username}", json=payload
+            )
+            resp.raise_for_status()
+        data = resp.json() if resp.content else {}
+        transfer_id = str(data.get("id") or data.get("transferId") or f"{username}:{filename}")
+        return transfer_id
+
+    async def downloads(self) -> list[dict[str, object]]:
+        async with self._client() as client:
+            resp = await request_with_retry(client, "GET", "/api/v0/transfers/downloads")
+            resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else list(data.get("downloads", []))
+
+    async def status(self, transfer_id: str) -> CapabilityState:
+        for item in await self.downloads():
+            item_id = str(
+                item.get("id")
+                or item.get("transferId")
+                or f"{item.get('username')}:{item.get('filename')}"
+            )
+            if item_id == transfer_id:
+                state = str(item.get("state") or item.get("status") or "queued").casefold()
+                return CapabilityState(True, state, dict(item))
+        return CapabilityState(False, "transfer not found", {"transfer_id": transfer_id})
+
+    async def cancel(self, username: str, filename: str) -> None:
+        async with self._client() as client:
+            resp = await request_with_retry(
+                client,
+                "DELETE",
+                f"/api/v0/transfers/downloads/{username}",
+                json={"filename": filename},
+            )
+            resp.raise_for_status()

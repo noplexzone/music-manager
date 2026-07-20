@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added filename metadata parsing, fielded artist/album/track search, escaped MusicBrainz Lucene queries, source-priority settings, selected-result download creation, slskd transfer enqueue/status/cancel support, and TIDAL-DL operator documentation.
+
+### Changed
+
+- Rebranded acquisition Jobs UI to Downloads while keeping the `/jobs` API stable.
+- Free-text downloads now cap provider results to 10 by default and preserve partial success errors without marking successful batches as wholly failed.
+
+### Fixed
+
+- Fixed slskd search metadata population, Prowlarr music-category scoping, slskd missing-search-id handling, selected Enqueue behavior, unsafe search-template escaping, and low-confidence MusicBrainz enrichment churn.
+
 ## [0.1.2] - 2026-07-17
 
 ### Fixed

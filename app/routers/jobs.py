@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Annotated
 
@@ -13,7 +14,7 @@ from app.auth import get_current_user, require_mutation
 from app.database import get_db
 from app.jobs.runner import run_job
 from app.models.job import Job, JobStatus
-from app.schemas.job import JobCreate, JobRead, JobSource
+from app.schemas.job import JobCreate, JobRead, JobSource, SelectedResultPayload
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
@@ -24,6 +25,10 @@ def _get_templates(request: Request) -> Jinja2Templates:
     return request.app.state.templates  # type: ignore[no-any-return]
 
 
+def _selected_json(payload: SelectedResultPayload | None) -> str | None:
+    return payload.model_dump_json() if payload is not None else None
+
+
 @router.post("/jobs", response_model=JobRead, status_code=201)
 async def create_job(
     payload: JobCreate,
@@ -31,7 +36,12 @@ async def create_job(
     db: Annotated[AsyncSession, Depends(get_db)],
     _user: Annotated[object, Depends(require_mutation)],
 ) -> Job:
-    job = Job(source=payload.source, query=payload.query, status=JobStatus.pending)
+    job = Job(
+        source=payload.source,
+        query=payload.query,
+        status=JobStatus.pending,
+        selected_result_json=_selected_json(payload.selected_result),
+    )
     db.add(job)
     await db.commit()
     await db.refresh(job)
@@ -61,18 +71,25 @@ async def get_job(job_id: int, db: Annotated[AsyncSession, Depends(get_db)]) -> 
     return job
 
 
-@router.get("/jobs/ui/list", response_class=HTMLResponse)
-async def jobs_page(
-    request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
+@router.get("/downloads", response_class=HTMLResponse, include_in_schema=False)
+async def downloads_page(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
 ) -> HTMLResponse:
     templates = _get_templates(request)
     result = await db.execute(select(Job).order_by(Job.created_at.desc()).limit(100))
-    jobs = list(result.scalars().all())
-    return templates.TemplateResponse(request, "jobs.html", {"jobs": jobs})
+    downloads = list(result.scalars().all())
+    return templates.TemplateResponse(
+        request, "downloads.html", {"downloads": downloads, "jobs": downloads}
+    )
 
 
-@router.post("/jobs/ui/create", response_class=HTMLResponse)
+@router.get("/jobs/ui/list", include_in_schema=False)
+async def old_jobs_page() -> RedirectResponse:
+    return RedirectResponse("/downloads", status_code=308)
+
+
+@router.post("/jobs/ui/create", response_class=HTMLResponse, include_in_schema=False)
+@router.post("/downloads/create", response_class=HTMLResponse, include_in_schema=False)
 async def create_job_ui(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -82,16 +99,27 @@ async def create_job_ui(
     form = await request.form()
     source = str(form.get("source", "slskd")).strip()
     query = str(form.get("query", "")).strip()
-
+    selected_raw = str(form.get("selected_result", "")).strip()
+    selected: SelectedResultPayload | None = None
+    if selected_raw:
+        try:
+            selected = SelectedResultPayload.model_validate(json.loads(selected_raw))
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Rejected invalid selected result payload from UI")
+            return RedirectResponse("/downloads", status_code=303)
     if source not in _ALLOWED_JOB_SOURCES:
-        logger.warning("Rejected unsupported job source from UI: %s", source)
-        return RedirectResponse("/jobs/ui/list", status_code=303)
-    if not query:
-        return RedirectResponse("/jobs/ui/list", status_code=303)
-
-    job = Job(source=source, query=query, status=JobStatus.pending)
+        logger.warning("Rejected unsupported download source from UI: %s", source)
+        return RedirectResponse("/downloads", status_code=303)
+    if not query and selected is None:
+        return RedirectResponse("/downloads", status_code=303)
+    job = Job(
+        source=source,
+        query=query or (selected.title if selected is not None else ""),
+        status=JobStatus.pending,
+        selected_result_json=_selected_json(selected),
+    )
     db.add(job)
     await db.commit()
     await db.refresh(job)
     background_tasks.add_task(run_job, job.id)
-    return RedirectResponse("/jobs/ui/list", status_code=303)
+    return RedirectResponse("/downloads", status_code=303)

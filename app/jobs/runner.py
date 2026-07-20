@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.database import get_session_factory
 from app.fingerprint.acoustid import fingerprint_file, lookup_acoustid
 from app.metadata.deezer import DeezerClient
+from app.metadata.filename_parse import parse_filename
 from app.metadata.musicbrainz import MusicBrainzClient
 from app.models.job import Job, JobStatus
 from app.models.path_preview import PathPreview
@@ -22,6 +23,7 @@ from app.models.track import FingerprintState, IdentityResolutionState, Track
 from app.models.workflow import AcquisitionState
 from app.naming.convention import NamingError, render_path
 from app.schemas.search import SearchRequest, SearchResult
+from app.settings_service import DEFAULT_FREE_TEXT_RESULT_LIMIT
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
@@ -67,20 +69,25 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
     await db.flush()
 
     try:
-        results = await _fetch_results(job, cfg)
+        results = _selected_result(job) or await _fetch_results(job, cfg)
         tracks_created = 0
         failures: list[str] = []
+        releases: dict[tuple[str | None, str | None], Release] = {}
         for result in results:
             track: Track | None = None
             try:
-                release = Release(
-                    job_id=job_id,
-                    source=result.source,
-                    title=result.title,
-                    album_artist=result.artist,
-                )
-                db.add(release)
-                await db.flush()
+                release_key = (result.artist, result.album or result.title)
+                release = releases.get(release_key)
+                if release is None:
+                    release = Release(
+                        job_id=job_id,
+                        source=result.source,
+                        title=result.album or result.title,
+                        album_artist=result.artist,
+                    )
+                    db.add(release)
+                    await db.flush()
+                    releases[release_key] = release
 
                 track = Track(
                     job_id=job_id,
@@ -88,6 +95,7 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
                     title=result.title,
                     artist=result.artist,
                     album_artist=result.artist,
+                    album=result.album,
                     source_path=None,
                     source=result.source,
                     acquisition_state=AcquisitionState.acquiring,
@@ -120,7 +128,10 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
                 logger.warning("Result processing failed")
                 failures.append("result_processing_failed")
 
-        if failures:
+        if failures and tracks_created:
+            job.status = JobStatus.partial
+            job.result_json = json.dumps({"tracks_created": tracks_created, "errors": failures})
+        elif failures:
             job.status = JobStatus.failed
             job.result_json = json.dumps({"tracks_created": tracks_created, "errors": failures})
         else:
@@ -159,7 +170,15 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
     await db.flush()
 
 
-async def _fetch_results(job: Job, cfg: Settings) -> list[SearchResult]:
+def _selected_result(job: Job) -> list[SearchResult] | None:
+    if not job.selected_result_json:
+        return None
+    return [SearchResult.model_validate(json.loads(job.selected_result_json))]
+
+
+async def _fetch_results(
+    job: Job, cfg: Settings, limit: int = DEFAULT_FREE_TEXT_RESULT_LIMIT
+) -> list[SearchResult]:
     req = SearchRequest(query=job.query, sources=[job.source])
     adapter: SourceAdapter
     if job.source == "slskd":
@@ -170,7 +189,7 @@ async def _fetch_results(job: Job, cfg: Settings) -> list[SearchResult]:
         adapter = YouTubeAdapter(cfg.ytdlp_cookies_file)
     else:
         raise ValueError(f"Unknown source: {job.source}")
-    return await adapter.search(req)
+    return (await adapter.search(req))[:limit]
 
 
 async def _prepare_acquisition(
@@ -188,6 +207,22 @@ async def _prepare_acquisition(
             track.acquisition_state = AcquisitionState.downloaded
             track.acquisition_provenance_json = json.dumps(acquired.provenance, sort_keys=True)
         return None, "downloaded"
+    if source == "slskd":
+        username = str(result.metadata.get("username") or "")
+        filename = str(result.metadata.get("filename") or "")
+        transfer_id = await SlskdAdapter(cfg.slskd_url, cfg.slskd_api_key).enqueue(
+            username, filename, result.size_bytes
+        )
+        if track is not None:
+            safe_name = Path(filename.replace("\\", "/")).name
+            staging_path = cfg.staging_root / safe_name
+            track.source_path = str(staging_path)
+            track.staging_path = str(staging_path)
+            track.acquisition_state = AcquisitionState.acquiring
+            track.acquisition_provenance_json = json.dumps(
+                {"source": "slskd", "username": username, "filename": filename}, sort_keys=True
+            )
+        return transfer_id, "queued"
     if source != "prowlarr":
         if track is not None:
             track.source_path = result.url
@@ -238,11 +273,22 @@ def _origin_tuple(parsed: ParseResult) -> tuple[str, str, int | None]:
 async def _enrich_musicbrainz(track: Track, cfg: Settings) -> None:
     if not track.title:
         return
+    started = _now()
+    guess = parse_filename(str(track.title))
+    title = guess.title
+    artist = track.artist or (guess.artist if guess.confidence >= 0.65 else None)
+    if guess.confidence < 0.25:
+        track.identity_state = IdentityResolutionState.unresolved
+        logger.info(
+            "Skipping MusicBrainz enrichment for low-confidence parse on track %s", track.id
+        )
+        return
     try:
         client = MusicBrainzClient(cfg.musicbrainz_user_agent)
         results = await client.search_recording(
-            title=track.title or "",
-            artist=track.artist,
+            title=title,
+            artist=artist,
+            album=track.album or (guess.album if guess.confidence >= 0.8 else None),
         )
         if results:
             meta = results[0]
@@ -260,6 +306,11 @@ async def _enrich_musicbrainz(track: Track, cfg: Settings) -> None:
                 track.duration_sec = meta.duration_ms // 1000
         else:
             track.identity_state = IdentityResolutionState.unresolved
+        logger.info(
+            "MusicBrainz enrichment for track %s took %.3fs",
+            track.id,
+            (_now() - started).total_seconds(),
+        )
     except Exception as exc:
         track.identity_state = IdentityResolutionState.unresolved
         logger.warning("MusicBrainz enrichment failed for track %d: %s", track.id, exc)

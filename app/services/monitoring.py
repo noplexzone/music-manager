@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.monitoring import MonitoringRecord, MonitoringStatus
 from app.models.release_candidate import MatchReviewState, ReleaseCandidate
 from app.models.track import Track
+from app.models.workflow import AcquisitionState as _AcquisitionState
 from app.models.workflow import ImportWorkflowState
 from app.services.library_import import (
     ImportExecutionError,
@@ -22,6 +23,7 @@ from app.services.library_import import (
     execute_release_import,
     plan_release_import,
 )
+from app.sources.base import CapabilityState as _CapabilityState
 
 
 class MonitoringCheckAlreadyRunning(RuntimeError):
@@ -314,3 +316,19 @@ async def execute_quality_upgrade(
     record.history_json = json.dumps(history[-100:])
     record.status = MonitoringStatus.active
     await db.flush()
+
+
+def map_slskd_transfer_state(state: _CapabilityState) -> _AcquisitionState:
+    """Map slskd transfer API state into the acquisition workflow enum."""
+    value = (state.reason or "").casefold()
+    if not state.available:
+        return _AcquisitionState.failed
+    if value in {"completed", "complete", "succeeded", "downloaded"}:
+        return _AcquisitionState.downloaded
+    if value in {"queued", "initializing"}:
+        return _AcquisitionState.queued
+    if value in {"cancelled", "canceled"}:
+        return _AcquisitionState.cancelled
+    if value in {"failed", "errored", "error"}:
+        return _AcquisitionState.failed
+    return _AcquisitionState.acquiring

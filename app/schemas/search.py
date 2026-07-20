@@ -1,13 +1,27 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from app.metadata.filename_parse import compose_search_query
 from app.schemas.health import SourceStatus
 
 
 class SearchRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=500)
+    query: str = Field(default="", max_length=500)
+    artist: str | None = Field(default=None, max_length=250)
+    album: str | None = Field(default=None, max_length=250)
+    track: str | None = Field(default=None, max_length=250)
     sources: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_search_terms(self) -> SearchRequest:
+        if not self.search_text:
+            raise ValueError("at least one search term is required")
+        return self
+
+    @property
+    def search_text(self) -> str:
+        return compose_search_query(self.query, self.artist, self.album, self.track)
 
 
 class SearchResult(BaseModel):

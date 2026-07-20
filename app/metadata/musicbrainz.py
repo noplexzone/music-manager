@@ -14,6 +14,37 @@ from tenacity import (
 
 logger = logging.getLogger(__name__)
 
+_LUCENE_SPECIALS = (
+    "\\",
+    "+",
+    "-",
+    "&&",
+    "||",
+    "!",
+    "(",
+    ")",
+    "{",
+    "}",
+    "[",
+    "]",
+    "^",
+    '"',
+    "~",
+    "*",
+    "?",
+    ":",
+    "/",
+)
+
+
+def escape_lucene(value: str) -> str:
+    escaped = value
+    escaped = escaped.replace("\\", "\\\\")
+    for token in _LUCENE_SPECIALS[1:]:
+        escaped = escaped.replace(token, "\\" + token)
+    return escaped
+
+
 _MB_BASE = "https://musicbrainz.org/ws/2"
 _RATE_SEMAPHORE = asyncio.Semaphore(1)
 _RATE_DELAY = 1.1
@@ -79,11 +110,11 @@ class MusicBrainzClient:
     async def search_recording(
         self, title: str, artist: str | None = None, album: str | None = None
     ) -> list[TrackMeta]:
-        parts = [f'recording:"{title}"']
+        parts = [f'recording:"{escape_lucene(title)}"']
         if artist:
-            parts.append(f'artist:"{artist}"')
+            parts.append(f'artist:"{escape_lucene(artist)}"')
         if album:
-            parts.append(f'release:"{album}"')
+            parts.append(f'release:"{escape_lucene(album)}"')
         lucene = " AND ".join(parts)
 
         resp = await self._get_with_retry(

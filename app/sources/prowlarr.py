@@ -5,12 +5,14 @@ import logging
 import httpx
 
 from app.http import request_with_retry
+from app.metadata.filename_parse import compose_search_query
 from app.schemas.search import SearchRequest, SearchResult
 from app.sources.base import CapabilityState
 
 logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = httpx.Timeout(15.0)
+MUSIC_CATEGORY_IDS = (3000,)
 
 
 class ProwlarrAdapter:
@@ -54,7 +56,14 @@ class ProwlarrAdapter:
                 client,
                 "GET",
                 "/api/v1/search",
-                params={"query": query.query, "type": "search", "limit": 100},
+                params={
+                    "query": compose_search_query(
+                        query.query, query.artist, query.album, query.track
+                    ),
+                    "type": "search",
+                    "limit": 100,
+                    "categories": ",".join(str(c) for c in MUSIC_CATEGORY_IDS),
+                },
             )
             resp.raise_for_status()
 
