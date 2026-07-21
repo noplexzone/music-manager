@@ -10,6 +10,7 @@
 </div>
 
 <form method="post" action="/downloads/create" class="form-row" style="margin-bottom:1.5rem;">
+  <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
   <input type="text" name="query" placeholder="Track or album&hellip;" style="flex:1; min-width:220px;" required>
   <select name="source">
     <option value="slskd">slskd</option>

@@ -86,6 +86,12 @@ async def execute_release(
     return [_plan_dict(plan) for plan in plans]
 
 
+@router.get("/ui/releases/{release_id}/plan", include_in_schema=False)
+async def plan_release_from_review_get(release_id: int) -> RedirectResponse:
+    del release_id
+    return RedirectResponse("/imports/ui/review", status_code=307)
+
+
 @router.post("/ui/releases/{release_id}/plan", response_class=RedirectResponse)
 async def plan_release_from_review(
     release_id: int,
@@ -100,6 +106,12 @@ async def plan_release_from_review(
         db, release, library_root=settings.library_root, naming_template=settings.naming_template
     )
     return RedirectResponse("/imports/ui/review", status_code=303)
+
+
+@router.get("/ui/releases/{release_id}/execute", include_in_schema=False)
+async def execute_release_from_review_get(release_id: int) -> RedirectResponse:
+    del release_id
+    return RedirectResponse("/imports/ui/review", status_code=307)
 
 
 @router.post("/ui/releases/{release_id}/execute", response_class=RedirectResponse)

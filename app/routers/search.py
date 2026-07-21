@@ -5,7 +5,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,6 +122,11 @@ async def search_page(request: Request) -> HTMLResponse:
         "search.html",
         {"results": None, "query": "", "artist": "", "album": "", "track": "", "error": None},
     )
+
+
+@router.get("/search/ui", include_in_schema=False)
+async def search_ui_get() -> RedirectResponse:
+    return RedirectResponse("/search", status_code=307)
 
 
 @router.post("/search/ui", response_class=HTMLResponse)

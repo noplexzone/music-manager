@@ -6,7 +6,8 @@
   <p class="eyebrow">Private library</p>
   <h1 id="login-heading">Welcome back</h1>
   <p>Sign in to manage your music library and acquisition queue.</p>
-  <form method="post" action="/api/auth/login">
+  {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/login">
     <label for="login-username">Username<input id="login-username" name="username" required autocomplete="username"></label>
     <label for="login-password">Password<input id="login-password" name="password" type="password" required autocomplete="current-password"></label>
     <button type="submit">Sign in</button>

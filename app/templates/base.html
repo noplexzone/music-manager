@@ -37,7 +37,7 @@
       <a href="/settings" {% if path.startswith("/settings") %}class="active" aria-current="page"{% endif %}><svg><use href="#i-settings"/></svg><span>Settings</span></a>
       <a href="/api/docs"><span class="nav-symbol" aria-hidden="true">{ }</span><span>API docs</span></a>
     </nav>
-    <p class="sidebar-meta">v0.2.0 · private &amp; local</p>
+    <p class="sidebar-meta">v0.2.1 · private &amp; local</p>
   </aside>
   <header class="mobile-header">
     <a class="brand" href="/" aria-label="Music Manager home"><span class="brand-mark">MM</span><span>Music Manager</span></a>
@@ -57,31 +57,5 @@
   </nav>
   {% endif %}
 </div>
-<script>
-document.addEventListener("submit", async (event) => {
-  const form = event.target;
-  if (!(form instanceof HTMLFormElement) || form.method.toLowerCase() !== "post") return;
-  if (form.dataset.customSubmit === "true") return;
-  event.preventDefault();
-  const csrfPart = document.cookie.split("; ").find((part) => part.startsWith("csrf="));
-  const csrf = csrfPart ? decodeURIComponent(csrfPart.split("=")[1]) : "";
-  const headers = csrf ? {"X-CSRF-Token": csrf} : {};
-  const credentialsForm = form.action.endsWith("/api/auth/setup") || form.action.endsWith("/api/auth/login");
-  let body;
-  if (credentialsForm) {
-    headers["Content-Type"] = "application/json";
-    body = JSON.stringify(Object.fromEntries(new FormData(form)));
-  } else {
-    body = new FormData(form);
-  }
-  const response = await fetch(form.action, {method: "POST", headers, body});
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    window.alert(typeof payload.detail === "string" ? payload.detail : "Request failed");
-    return;
-  }
-  window.location.assign(credentialsForm ? "/" : response.url);
-});
-</script>
 </body>
 </html>

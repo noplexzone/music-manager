@@ -89,6 +89,20 @@ def _set_auth_cookies(
     )
 
 
+async def _authenticate_login(
+    credentials: Credentials, request: Request, db: AsyncSession, settings: Settings
+) -> tuple[str, AuthSession, AppUser]:
+    key = login_key(request, credentials.username)
+    check_login_allowed(key)
+    user = await db.scalar(select(AppUser).where(AppUser.username == credentials.username))
+    if user is None or not verify_password(user.password_hash, credentials.password):
+        record_login_failure(key)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    clear_login_failures(key)
+    token, session = await create_session(db, user, settings)
+    return token, session, user
+
+
 @router.get("/setup", response_class=HTMLResponse, include_in_schema=False)
 async def setup_page(
     request: Request, db: Annotated[AsyncSession, Depends(get_db)]
@@ -146,6 +160,32 @@ async def setup_owner(
     return {"username": user.username, "role": user.role.value, "csrf_token": session.csrf_token}
 
 
+@router.post("/login", response_class=HTMLResponse, include_in_schema=False)
+async def login_form(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> StarletteResponse:
+    if not await setup_complete(db):
+        return RedirectResponse("/setup", status_code=307)
+    form = await request.form()
+    templates: Jinja2Templates = request.app.state.templates
+    credentials = Credentials(
+        username=str(form.get("username", "")), password=str(form.get("password", ""))
+    )
+    try:
+        token, session, _user = await _authenticate_login(credentials, request, db, settings)
+    except HTTPException as exc:
+        status_code = exc.status_code if exc.status_code == 429 else 200
+        detail = exc.detail if isinstance(exc.detail, str) else "Login failed"
+        return templates.TemplateResponse(
+            request, "login.html", {"error": detail}, status_code=status_code
+        )
+    response = RedirectResponse("/", status_code=303)
+    _set_auth_cookies(response, token, session, settings)
+    return response
+
+
 @router.post("/api/auth/login")
 async def login(
     payload: Credentials,
@@ -154,14 +194,7 @@ async def login(
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, str]:
-    key = login_key(request, payload.username)
-    check_login_allowed(key)
-    user = await db.scalar(select(AppUser).where(AppUser.username == payload.username))
-    if user is None or not verify_password(user.password_hash, payload.password):
-        record_login_failure(key)
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    clear_login_failures(key)
-    token, session = await create_session(db, user, settings)
+    token, session, user = await _authenticate_login(payload, request, db, settings)
     _set_auth_cookies(response, token, session, settings)
     return {"username": user.username, "role": user.role.value, "csrf_token": session.csrf_token}
 
