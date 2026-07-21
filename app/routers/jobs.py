@@ -88,6 +88,16 @@ async def old_jobs_page() -> RedirectResponse:
     return RedirectResponse("/downloads", status_code=308)
 
 
+@router.get("/jobs/ui/create", include_in_schema=False)
+async def old_create_job_page() -> RedirectResponse:
+    return RedirectResponse("/downloads", status_code=307)
+
+
+@router.get("/downloads/create", include_in_schema=False)
+async def downloads_create_page() -> RedirectResponse:
+    return RedirectResponse("/downloads", status_code=307)
+
+
 @router.post("/jobs/ui/create", response_class=HTMLResponse, include_in_schema=False)
 @router.post("/downloads/create", response_class=HTMLResponse, include_in_schema=False)
 async def create_job_ui(

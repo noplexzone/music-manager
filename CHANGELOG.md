@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-20
+
+### Fixed
+
+- Restored native server-rendered form submission by removing the global fetch interceptor, adding CSRF fields to mutating forms, adding form-based login, and redirecting POST-only UI GET paths to safe pages.
+
 ## [0.2.0] - 2026-07-20
 
 ### Added
@@ -101,7 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Hardened job source validation, Prowlarr NZB URL trust checks, YouTube search timeout behavior, Docker build context exclusions, and filename extension preservation
 
-[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/noplexzone/music-manager/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/noplexzone/music-manager/compare/v0.1.3...v0.2.0
 [0.1.2]: https://github.com/noplexzone/music-manager/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/noplexzone/music-manager/compare/v0.1.0...v0.1.1

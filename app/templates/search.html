@@ -6,6 +6,7 @@
   <p>Query configured music sources in real time. TIDAL supports direct TIDAL track URL downloads only via tidal-dl.</p>
 </div>
 <form method="post" action="/search/ui" class="form-row" style="margin-bottom:1.5rem;">
+  <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
   <input type="text" name="artist" value="{{ artist | default('') | e }}" placeholder="Artist" style="flex:1; min-width:160px;">
   <input type="text" name="album" value="{{ album | default('') | e }}" placeholder="Album" style="flex:1; min-width:160px;">
   <input type="text" name="track" value="{{ track | default('') | e }}" placeholder="Track" style="flex:1; min-width:160px;">
@@ -51,6 +52,7 @@
           <td>{{ ("%d:%02d" % (r.duration_sec // 60, r.duration_sec % 60)) if r.duration_sec else "–" }}</td>
           <td>
             <form method="post" action="/downloads/create" style="display:inline;">
+              <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
               <input type="hidden" name="query" value="{{ (r.title or query) | e }}">
               <input type="hidden" name="source" value="{{ r.source | e }}">
               <input type="hidden" name="selected_result" value="{{ r.model_dump_json() | e }}">

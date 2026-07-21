@@ -22,7 +22,7 @@ def test_custom_json_forms_are_not_double_submitted() -> None:
     setup = (templates / "setup.html").read_text()
     settings = (templates / "settings.html").read_text()
 
-    assert 'form.dataset.customSubmit === "true"' in base
+    assert 'document.addEventListener("submit"' not in base
     assert 'id="setup-form"' in setup and 'data-custom-submit="true"' in setup
     assert 'id="settings-form"' in settings and 'data-custom-submit="true"' in settings
     assert 'headers: {"Content-Type": "application/json"' in settings

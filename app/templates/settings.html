@@ -132,6 +132,7 @@
 </form>
 
 <form method="post" action="/settings" class="card">
+  <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
   <h2>Download source priority</h2>
   <p class="hint">Rows are attempted top-to-bottom for search grouping and acquisition fallback. TIDAL is disabled by default until explicitly enabled here and configured above.</p>
   <div class="table-wrap">
