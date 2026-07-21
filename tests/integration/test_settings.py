@@ -1,0 +1,413 @@
+from __future__ import annotations
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_save_and_retrieve_plain_setting(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.sources.base import CapabilityState
+    from app.sources.slskd import SlskdAdapter
+
+    async def _ok(self: object) -> CapabilityState:
+        return CapabilityState(available=True)
+
+    monkeypatch.setattr(SlskdAdapter, "health", _ok)
+    save = await client.post(
+        "/api/settings/save",
+        json={"slskd_url": "http://slskd-host:5030", "slskd_api_key": "key"},
+    )
+    assert save.status_code == 200
+
+    get = await client.get("/api/settings")
+    assert get.status_code == 200
+    data = get.json()
+    assert data["slskd_url"]["value"] == "http://slskd-host:5030"
+    assert data["slskd_url"]["configured"] is True
+    assert data["slskd_url"]["locked_by_environment"] is False
+
+
+@pytest.mark.asyncio
+async def test_save_secret_and_retrieve_masked(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.sources.base import CapabilityState
+    from app.sources.slskd import SlskdAdapter
+
+    async def _ok(self: object) -> CapabilityState:
+        return CapabilityState(available=True)
+
+    monkeypatch.setattr(SlskdAdapter, "health", _ok)
+    save = await client.post(
+        "/api/settings/save",
+        json={"slskd_url": "http://slskd", "slskd_api_key": "super-secret-key"},
+    )
+    assert save.status_code == 200
+
+    get = await client.get("/api/settings")
+    data = get.json()
+    assert data["slskd_api_key"]["value"] == "***"
+    assert data["slskd_api_key"]["configured"] is True
+    assert data["slskd_api_key"]["locked_by_environment"] is False
+
+
+@pytest.mark.asyncio
+async def test_blank_secret_keeps_existing_in_api(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.sources.base import CapabilityState
+    from app.sources.slskd import SlskdAdapter
+
+    async def _ok(self: object) -> CapabilityState:
+        return CapabilityState(available=True)
+
+    monkeypatch.setattr(SlskdAdapter, "health", _ok)
+    await client.post(
+        "/api/settings/save",
+        json={"slskd_url": "http://slskd", "slskd_api_key": "initial-secret"},
+    )
+    await client.post(
+        "/api/settings/save",
+        json={"slskd_api_key": ""},
+    )
+    get = await client.get("/api/settings")
+    data = get.json()
+    assert data["slskd_api_key"]["configured"] is True
+    assert data["slskd_api_key"]["value"] == "***"
+
+
+@pytest.mark.asyncio
+async def test_env_lock_reflected_in_api(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import Settings, override_settings
+
+    override_settings(
+        Settings(
+            database_url="sqlite+aiosqlite:///:memory:",
+            secret_key="test-secret",
+            auth_cookie_secure=False,
+            slskd_url="http://env-locked-slskd",
+        )
+    )
+    get = await client.get("/api/settings")
+    data = get.json()
+    assert data["slskd_url"]["locked_by_environment"] is True
+    assert data["slskd_url"]["value"] == "http://env-locked-slskd"
+
+
+@pytest.mark.asyncio
+async def test_test_endpoint_does_not_write(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _fake_health(self: object) -> object:
+        from app.sources.base import CapabilityState
+
+        return CapabilityState(available=True)
+
+    from app.sources.slskd import SlskdAdapter
+
+    monkeypatch.setattr(SlskdAdapter, "health", _fake_health)
+
+    resp = await client.post(
+        "/api/settings/test",
+        json={"provider": "slskd", "slskd_url": "http://test", "slskd_api_key": "k"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["available"] is True
+
+    get = await client.get("/api/settings")
+    data = get.json()
+    assert data["slskd_url"]["configured"] is False
+
+
+@pytest.mark.asyncio
+async def test_test_endpoint_unknown_provider_returns_error(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/settings/test",
+        json={"provider": "unknown_provider"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_tidal_settings_stored_and_returned(client: AsyncClient) -> None:
+    save = await client.post(
+        "/api/settings/save",
+        json={"tidal_config_path": "/data/tidal/config", "tidal_quality": "HiFi"},
+    )
+    assert save.status_code == 200
+
+    get = await client.get("/api/settings")
+    data = get.json()
+    assert data["tidal_config_path"]["value"] == "/data/tidal/config"
+    assert data["tidal_quality"]["value"] == "HiFi"
+    assert data["tidal_config_path"]["locked_by_environment"] is False
+
+
+@pytest.mark.asyncio
+async def test_settings_migration_model_persistence(db_session: object) -> None:
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.settings import ProviderSetting
+
+    assert isinstance(db_session, AsyncSession)
+    row = ProviderSetting(key="slskd_url", value_plain="http://persist-test", value_encrypted=None)
+    db_session.add(row)
+    await db_session.flush()
+
+    fetched = await db_session.scalar(
+        select(ProviderSetting).where(ProviderSetting.key == "slskd_url")
+    )
+    assert fetched is not None
+    assert fetched.value_plain == "http://persist-test"
+
+
+@pytest.mark.asyncio
+async def test_save_validate_only_flag_via_internal_api(db_session: object) -> None:
+    from pathlib import Path
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.config import Settings
+    from app.models.settings import ProviderSetting
+    from app.settings_service import save_settings
+
+    assert isinstance(db_session, AsyncSession)
+    settings = Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        secret_key="test-secret",
+        auth_cookie_secure=False,
+        library_root=Path("/music"),
+        staging_root=Path("/staging"),
+    )
+    await save_settings(
+        db_session, {"slskd_url": "http://should-not-persist"}, settings, validate_only=True
+    )
+    await db_session.flush()
+    row = await db_session.scalar(
+        select(ProviderSetting).where(ProviderSetting.key == "slskd_url")
+    )
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_save_backstop_blocks_when_provider_unreachable(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.sources.base import CapabilityState
+    from app.sources.slskd import SlskdAdapter
+
+    async def _fail_health(self: object) -> CapabilityState:
+        return CapabilityState(available=False, reason="connection refused")
+
+    monkeypatch.setattr(SlskdAdapter, "health", _fail_health)
+
+    resp = await client.post(
+        "/api/settings/save",
+        json={"slskd_url": "http://new-url", "slskd_api_key": "some-key"},
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert "slskd" in body["detail"]["validation_errors"]
+
+    # Nothing was written.
+    get = await client.get("/api/settings")
+    data = get.json()
+    assert data["slskd_url"]["configured"] is False
+
+
+@pytest.mark.asyncio
+async def test_save_backstop_passes_when_provider_reachable(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.sources.base import CapabilityState
+    from app.sources.slskd import SlskdAdapter
+
+    async def _ok_health(self: object) -> CapabilityState:
+        return CapabilityState(available=True)
+
+    monkeypatch.setattr(SlskdAdapter, "health", _ok_health)
+
+    resp = await client.post(
+        "/api/settings/save",
+        json={"slskd_url": "http://good-slskd", "slskd_api_key": "valid-key"},
+    )
+    assert resp.status_code == 200
+
+    get = await client.get("/api/settings")
+    data = get.json()
+    assert data["slskd_url"]["value"] == "http://good-slskd"
+    assert data["slskd_api_key"]["configured"] is True
+
+
+@pytest.mark.asyncio
+async def test_save_no_validation_when_no_credentials_changed(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Saving only non-credential fields (e.g. library_root) must not trigger probe."""
+    probe_called = False
+
+    from app.sources.slskd import SlskdAdapter
+
+    async def _should_not_be_called(self: object) -> object:
+        nonlocal probe_called
+        probe_called = True
+        from app.sources.base import CapabilityState
+
+        return CapabilityState(available=False, reason="should not have been called")
+
+    monkeypatch.setattr(SlskdAdapter, "health", _should_not_be_called)
+
+    resp = await client.post(
+        "/api/settings/save",
+        json={"naming_template": "{album_artist}/{year}/{title}.{ext}"},
+    )
+    assert resp.status_code == 200
+    assert not probe_called
+
+
+@pytest.mark.asyncio
+async def test_test_endpoint_uses_stored_secret_as_fallback(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test endpoint should use the stored (decrypted) API key when none is supplied."""
+    received_key: list[str] = []
+
+    from app.sources.slskd import SlskdAdapter
+
+    original_init = SlskdAdapter.__init__
+
+    def _capturing_init(self: SlskdAdapter, url: str, api_key: str) -> None:
+        received_key.append(api_key)
+        original_init(self, url, api_key)
+
+    from app.sources.base import CapabilityState
+
+    async def _ok_health(self: object) -> CapabilityState:
+        return CapabilityState(available=True)
+
+    monkeypatch.setattr(SlskdAdapter, "__init__", _capturing_init)
+    monkeypatch.setattr(SlskdAdapter, "health", _ok_health)
+
+    # Store a secret key.
+    await client.post(
+        "/api/settings/save",
+        json={"slskd_url": "http://stored-slskd", "slskd_api_key": "stored-secret-key"},
+    )
+
+    # Test with blank api_key — should fall back to the stored secret.
+    resp = await client.post(
+        "/api/settings/test",
+        json={"provider": "slskd", "slskd_url": "http://stored-slskd", "slskd_api_key": ""},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["available"] is True
+    assert received_key[-1] == "stored-secret-key"
+
+
+@pytest.mark.asyncio
+async def test_setup_with_provider_settings_persists_atomically(
+    unauthenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Provider settings supplied during setup must be saved in the same transaction."""
+    resp = await unauthenticated_client.post(
+        "/api/auth/setup",
+        json={
+            "username": "owner",
+            "password": "Owner-Password-Secure-42",
+            "provider_settings": {
+                "slskd_url": "http://setup-slskd",
+                "slskd_api_key": "setup-secret",
+                "musicbrainz_contact": "test@example.com",
+            },
+        },
+    )
+    assert resp.status_code == 201
+    csrf = resp.json()["csrf_token"]
+
+    unauthenticated_client.headers["X-CSRF-Token"] = csrf
+    get = await unauthenticated_client.get("/api/settings")
+    assert get.status_code == 200
+    data = get.json()
+    assert data["slskd_url"]["value"] == "http://setup-slskd"
+    assert data["musicbrainz_contact"]["value"] == "test@example.com"
+
+
+@pytest.mark.asyncio
+async def test_setup_without_provider_settings_still_works(
+    unauthenticated_client: AsyncClient,
+) -> None:
+    """Setup must succeed with only username/password (no provider_settings)."""
+    resp = await unauthenticated_client.post(
+        "/api/auth/setup",
+        json={"username": "owner", "password": "Owner-Password-Secure-42"},
+    )
+    assert resp.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_partial_save_preserves_omitted_plain_settings(client: AsyncClient) -> None:
+    first = await client.post(
+        "/api/settings/save",
+        json={"tidal_config_path": "/data/tidal", "tidal_quality": "HiFi"},
+    )
+    assert first.status_code == 200
+    second = await client.post(
+        "/api/settings/save",
+        json={"musicbrainz_contact": "operator@example.com"},
+    )
+    assert second.status_code == 200
+    data = (await client.get("/api/settings")).json()
+    assert data["tidal_config_path"]["value"] == "/data/tidal"
+    assert data["tidal_quality"]["value"] == "HiFi"
+
+
+@pytest.mark.asyncio
+async def test_incomplete_changed_provider_credentials_are_rejected(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/settings/save",
+        json={"slskd_url": "http://slskd-without-key"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["validation_errors"]["slskd"] == (
+        "URL and API key are required together"
+    )
+    data = (await client.get("/api/settings")).json()
+    assert data["slskd_url"]["configured"] is False
+
+
+@pytest.mark.asyncio
+async def test_setup_rejects_incomplete_provider_pair_without_claiming_owner(
+    unauthenticated_client: AsyncClient,
+) -> None:
+    rejected = await unauthenticated_client.post(
+        "/api/auth/setup",
+        json={
+            "username": "owner",
+            "password": "Owner-Password-Secure-42",
+            "provider_settings": {"slskd_url": "http://missing-key"},
+        },
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["validation_errors"]["slskd"] == (
+        "URL and API key are required together"
+    )
+    retry = await unauthenticated_client.post(
+        "/api/auth/setup",
+        json={"username": "owner", "password": "Owner-Password-Secure-42"},
+    )
+    assert retry.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_tidal_quality_rejects_values_not_available_in_ui(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/settings/save",
+        json={"tidal_quality": "HI_RES"},
+    )
+    assert response.status_code == 422

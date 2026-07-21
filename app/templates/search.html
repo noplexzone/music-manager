@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Search – Music Manager{% endblock %}
 {% block content %}
-<div class="page-header"><h1>Search</h1><p>Query configured music sources in real time.</p></div>
+<div class="page-header">
+  <h1>Search</h1>
+  <p>Query configured music sources in real time. TIDAL supports direct TIDAL track URL downloads only via tidal-dl.</p>
+</div>
 <form method="post" action="/search/ui" class="form-row" style="margin-bottom:1.5rem;">
   <input type="text" name="artist" value="{{ artist | default('') | e }}" placeholder="Artist" style="flex:1; min-width:160px;">
   <input type="text" name="album" value="{{ album | default('') | e }}" placeholder="Album" style="flex:1; min-width:160px;">
@@ -11,17 +14,56 @@
 </form>
 {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
 {% if results is not none %}
-  {% if source_states %}<div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">{% for name, state in source_states.items() %}<span class="badge {{ 'ok' if state.available else 'error' }}"><span class="dot"></span>{{ name }}{% if not state.available %}: {{ state.reason or 'unavailable' }}{% endif %}</span>{% endfor %}</div>{% endif %}
-  {% if results %}<div class="card" style="padding:0;"><table><thead><tr><th>Source</th><th>Title</th><th>Artist</th><th>Album</th><th>Format</th><th>Size</th><th>Duration</th><th>Action</th></tr></thead><tbody>
-  {% for r in results %}
-    <tr><td><span class="badge info">{{ r.source }}</span></td><td>{{ r.title or "–" }}</td><td>{{ r.artist or "–" }}</td><td>{{ r.album or "–" }}</td><td>{{ r.format or "–" }}</td><td>{{ (r.size_bytes // 1048576) ~ " MB" if r.size_bytes else "–" }}</td><td>{{ ("%d:%02d" % (r.duration_sec // 60, r.duration_sec % 60)) if r.duration_sec else "–" }}</td><td>
-      <form method="post" action="/downloads/create" style="display:inline;">
-        <input type="hidden" name="query" value="{{ (r.title or query) | e }}">
-        <input type="hidden" name="source" value="{{ r.source | e }}">
-        <input type="hidden" name="selected_result" value="{{ r.model_dump_json() | e }}">
-        <button type="submit" class="btn secondary" style="padding:0.2rem 0.6rem; font-size:0.8rem;">Enqueue</button>
-      </form></td></tr>
-  {% endfor %}
-  </tbody></table></div>{% else %}<p style="color:var(--text-muted);">No results found. Try different fields or check source availability.</p>{% endif %}
+  {% if source_states %}
+  <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
+    {% for name, state in source_states.items() %}
+    <span class="badge {{ 'ok' if state.available else 'error' }}">
+      <span class="dot"></span>{{ name }}{% if not state.available %}: {{ state.reason or 'unavailable' }}{% endif %}
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if results %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Title</th>
+          <th>Artist</th>
+          <th>Album</th>
+          <th>Format</th>
+          <th>Size</th>
+          <th>Duration</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in results %}
+        <tr>
+          <td><span class="badge info">{{ r.source }}</span></td>
+          <td>{{ r.title or "–" }}</td>
+          <td>{{ r.artist or "–" }}</td>
+          <td>{{ r.album or "–" }}</td>
+          <td>{{ r.format or "–" }}</td>
+          <td>{{ (r.size_bytes // 1048576) ~ " MB" if r.size_bytes else "–" }}</td>
+          <td>{{ ("%d:%02d" % (r.duration_sec // 60, r.duration_sec % 60)) if r.duration_sec else "–" }}</td>
+          <td>
+            <form method="post" action="/downloads/create" style="display:inline;">
+              <input type="hidden" name="query" value="{{ (r.title or query) | e }}">
+              <input type="hidden" name="source" value="{{ r.source | e }}">
+              <input type="hidden" name="selected_result" value="{{ r.model_dump_json() | e }}">
+              <button type="submit" class="btn secondary" style="padding:0.2rem 0.6rem; font-size:0.8rem;">Enqueue</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state" role="status"><h3>No results found</h3><p>Try different fields or check provider readiness in Settings.</p><a class="btn secondary" href="/settings">Check settings</a></div>
+  {% endif %}
 {% endif %}
 {% endblock %}

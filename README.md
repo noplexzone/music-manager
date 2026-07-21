@@ -1,6 +1,6 @@
 # Music Manager
 
-**Private, self-hosted music acquisition and library management — v0.1.3**
+**Private, self-hosted music acquisition and library management — v0.2.0**
 
 A FastAPI application that coordinates multiple acquisition sources, enriches tracks with metadata, fingerprints audio, and enforces strict library naming conventions. Designed to run entirely on-premises; no data leaves the host.
 
@@ -11,7 +11,25 @@ A FastAPI application that coordinates multiple acquisition sources, enriches tr
 | slskd | Soulseek P2P | Primary peer-to-peer source |
 | Prowlarr + SABnzbd | Usenet NZB | Indexer-managed newsgroup downloads |
 | YouTube | HTTP stream | yt-dlp extraction |
-| TIDAL | Tidal-DL backend | Disabled by default; see [docs/tidal.md](docs/tidal.md); never simulated |
+| TIDAL | tidal-dl | Direct HTTPS track URLs; authenticated local profile required |
+
+### TIDAL setup
+
+Music Manager uses `tidal-dl` for direct TIDAL **track** URLs. It does not simulate catalog search and does not accept album or playlist URLs.
+
+1. Build the image and create the persistent profile directory:
+   ```bash
+   docker compose build
+   mkdir -p data/tidal
+   ```
+2. Perform the one-time interactive tidal-dl authentication outside the web app:
+   ```bash
+   docker compose run --rm --entrypoint tidal-dl -e HOME=/app/data/tidal app
+   ```
+3. In Settings (or `.env`), configure `/app/data/tidal/.tidal-dl.json` and `/app/data/tidal/.tidal-dl.token.json`. Both files must use those exact names, share the same directory, and remain on the persistent data volume.
+4. Choose `Normal`, `High`, `HiFi`, or `Master`, then use a direct URL such as `https://tidal.com/browse/track/123456` when creating a TIDAL job.
+
+The web app never starts an interactive login. Missing or expired authentication is reported as unavailable/failure instead of hanging a worker. Each acquisition uses a private copy of the profile so tidal-dl cannot persist transient output paths or mutate the operator's credential files.
 
 ## Metadata & Fingerprinting
 
@@ -36,7 +54,7 @@ Extension tokens are sanitized with the same filesystem safety rules as other na
 
 - **Backend** — Python 3.12, FastAPI, SQLAlchemy 2.x (async), SQLite
 - **Templates** — Jinja2 (server-side HTML for admin UI)
-- **Task Queue** — persistent job and acquisition/import workflow records in SQLite (no external broker in v0.1.3)
+- **Task Queue** — persistent job and acquisition/import workflow records in SQLite (no external broker in v0.2.0)
 - **Containerisation** — Docker + Docker Compose
 
 ## Requirements
@@ -65,10 +83,10 @@ HTTP. Set `AUTH_COOKIE_SECURE=true` whenever Music Manager is served behind HTTP
 
 ## Container image
 
-The release workflow publishes tagged builds to `noplexzone/music-manager` on Docker Hub after the quality gate passes. Pull v0.1.3 with:
+The release workflow publishes tagged builds to `noplexzone/music-manager` on Docker Hub after the quality gate passes. Pull v0.2.0 with:
 
 ```bash
-docker pull noplexzone/music-manager:0.1.2
+docker pull noplexzone/music-manager:0.2.0
 ```
 
 ## Continuous integration
@@ -77,4 +95,4 @@ Pull requests and pushes to `main` run pytest, Ruff lint and formatting checks, 
 
 ## Version
 
-v0.1.3 — Search/download selection fixes, source priority settings, Downloads UI rename, and TIDAL-DL documentation
+v0.2.0 — Persistent provider setup, direct TIDAL acquisition, library browsing, and redesigned operator UI

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ detail.display_name }} — Artists — Music Manager{% endblock %}
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/artists">Artists</a> / <span aria-current="page">{{ detail.display_name }}</span>
+</nav>
+
+<div class="page-header artist-hero">
+  <div class="artist-avatar hero-avatar" aria-hidden="true">{{ detail.display_name[:1] | upper }}</div>
+  <div><p class="eyebrow">Artist</p><h1>{{ detail.display_name }}</h1>
+  <p>
+    {{ detail.track_count }} track{% if detail.track_count != 1 %}s{% endif %}
+    across {{ detail.album_count }} album{% if detail.album_count != 1 %}s{% endif %}
+    {% if detail.total_duration_sec %}
+    &mdash;
+    {% set h = (detail.total_duration_sec // 3600) %}
+    {% set m = ((detail.total_duration_sec % 3600) // 60) %}
+    {% if h > 0 %}{{ h }}h {{ m }}m{% else %}{{ m }}m{% endif %}
+    {% endif %}
+  </p></div>
+</div>
+
+{% if detail.albums %}
+{% for album in detail.albums %}
+<section class="album-section" aria-labelledby="album-{{ loop.index }}">
+  <div class="album-header">
+    <h2 id="album-{{ loop.index }}">{{ album.album }}</h2>
+    {% if album.year %}<span class="album-year">{{ album.year }}</span>{% endif %}
+    {% if album.label %}<span class="album-label">{{ album.label }}</span>{% endif %}
+    {% if album.country %}<span class="album-country">{{ album.country }}</span>{% endif %}
+    {% if album.catalog_number %}<span class="album-catalog">{{ album.catalog_number }}</span>{% endif %}
+    {% if album.release_mbid %}
+    <span class="album-mbid"><abbr title="MusicBrainz Release ID">MBID</abbr>: {{ album.release_mbid }}</span>
+    {% endif %}
+  </div>
+  <table aria-label="{{ album.album }} track list">
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Title</th>
+        <th scope="col">Format</th>
+        <th scope="col">Duration</th>
+        <th scope="col">Source</th>
+        <th scope="col">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for track in album.tracks %}
+      <tr>
+        <td class="track-no">
+          {% if track.disc %}D{{ track.disc }}-{% endif %}{{ track.track_no or "?" }}
+        </td>
+        <td><a href="/tracks/{{ track.id }}/ui">{{ track.title }}</a></td>
+        <td>
+          {% if track.fmt %}<span class="badge info">{{ track.fmt }}</span>{% else %}—{% endif %}
+        </td>
+        <td>
+          {% if track.duration_sec %}
+          {% set dm = (track.duration_sec // 60) %}
+          {% set ds = (track.duration_sec % 60) %}
+          {{ dm }}:{{ "%02d" | format(ds) }}
+          {% else %}—{% endif %}
+        </td>
+        <td><span class="badge info">{{ track.source }}</span></td>
+        <td>
+          {% if track.import_state == "imported" %}
+            <span class="badge ok">{{ track.import_state }}</span>
+          {% elif track.import_state == "failed" %}
+            <span class="badge error">{{ track.import_state }}</span>
+          {% else %}
+            <span class="badge warn">{{ track.import_state }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+
+{% if detail.total_track_pages > 1 %}
+<nav class="pagination" aria-label="Track pagination">
+  {% if detail.has_prev %}
+  <a href="/artists/detail?name={{ detail.display_name | urlencode }}&page={{ detail.page - 1 }}&per_page={{ detail.per_page }}" class="btn secondary" aria-label="Previous page">← Prev</a>
+  {% else %}
+  <span class="btn secondary disabled" aria-disabled="true">← Prev</span>
+  {% endif %}
+  <span class="pagination-info">Page {{ detail.page }} of {{ detail.total_track_pages }}</span>
+  {% if detail.has_next %}
+  <a href="/artists/detail?name={{ detail.display_name | urlencode }}&page={{ detail.page + 1 }}&per_page={{ detail.per_page }}" class="btn secondary" aria-label="Next page">Next →</a>
+  {% else %}
+  <span class="btn secondary disabled" aria-disabled="true">Next →</span>
+  {% endif %}
+</nav>
+{% endif %}
+
+{% else %}
+<div class="empty-state" role="status">
+  <p>No tracks found for <strong>{{ detail.display_name }}</strong>.</p>
+  <a href="/artists" class="btn secondary">Back to Artists</a>
+</div>
+{% endif %}
+{% endblock %}

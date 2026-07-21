@@ -1,0 +1,541 @@
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from typing import Any
+
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.models.track import Track
+
+UNKNOWN = "Unknown"
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 200
+
+_VALID_LIBRARY_SORTS = frozenset({"title", "artist", "album", "year", "source", "added"})
+_VALID_ARTIST_SORTS = frozenset({"name", "tracks", "albums", "duration"})
+
+
+def _artist_expr() -> Any:
+    return func.coalesce(
+        func.nullif(Track.album_artist, ""),
+        func.nullif(Track.artist, ""),
+        UNKNOWN,
+    )
+
+
+def _album_expr() -> Any:
+    return func.coalesce(func.nullif(Track.album, ""), UNKNOWN)
+
+
+def _year_expr() -> Any:
+    return func.coalesce(func.nullif(Track.year, ""), "")
+
+
+async def _count_album_groups(db: AsyncSession, *filters: Any) -> int:
+    release_stmt = select(func.count(func.distinct(Track.release_id))).where(
+        Track.release_id.is_not(None), *filters
+    )
+    release_count = int((await db.scalar(release_stmt)) or 0)
+    fallback_groups = (
+        select(
+            _artist_expr().label("artist"),
+            _album_expr().label("album"),
+            _year_expr().label("year"),
+        )
+        .where(Track.release_id.is_(None), *filters)
+        .group_by(_artist_expr(), _album_expr(), _year_expr())
+        .subquery()
+    )
+    fallback_count = int((await db.scalar(select(func.count()).select_from(fallback_groups))) or 0)
+    return release_count + fallback_count
+
+
+@dataclass
+class LibraryStats:
+    track_count: int
+    artist_count: int
+    album_count: int
+    total_duration_sec: int
+    total_bytes: int
+    format_breakdown: dict[str, int]
+    source_breakdown: dict[str, int]
+
+
+@dataclass
+class TrackRow:
+    id: int
+    title: str
+    artist: str
+    album: str
+    year: str | None
+    source: str
+    source_path: str | None
+    acquisition_state: str
+    import_state: str
+    duration_sec: int | None
+    mbid: str | None
+    fmt: str
+    disc: int | None
+    disc_total: int | None
+    track_no: int | None
+    file_size_bytes: int | None
+    fingerprint_state: str
+    deezer_id: str | None
+    acoustid: str | None
+    release_id: int | None
+
+
+@dataclass
+class Page[T]:
+    items: list[T]
+    total: int
+    page: int
+    per_page: int
+
+    @property
+    def total_pages(self) -> int:
+        if self.per_page <= 0:
+            return 1
+        return max(1, math.ceil(self.total / self.per_page))
+
+    @property
+    def has_prev(self) -> bool:
+        return self.page > 1
+
+    @property
+    def has_next(self) -> bool:
+        return self.page < self.total_pages
+
+
+@dataclass
+class ArtistRow:
+    display_name: str
+    track_count: int
+    album_count: int
+    total_duration_sec: int | None
+    min_year: str | None
+    max_year: str | None
+    formats: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AlbumGroup:
+    album: str
+    year: str | None
+    release_id: int | None
+    release_mbid: str | None
+    label: str | None
+    country: str | None
+    catalog_number: str | None
+    tracks: list[TrackRow] = field(default_factory=list)
+
+
+@dataclass
+class ArtistDetail:
+    display_name: str
+    track_count: int
+    album_count: int
+    total_duration_sec: int
+    albums: list[AlbumGroup]
+    page: int = 1
+    per_page: int = _DEFAULT_PAGE_SIZE
+    total_track_pages: int = 1
+    has_prev: bool = False
+    has_next: bool = False
+
+
+def _normalize_title(t: Track) -> str:
+    return t.title or UNKNOWN
+
+
+def _normalize_artist(t: Track) -> str:
+    return (t.album_artist or None) or (t.artist or None) or UNKNOWN
+
+
+def _normalize_album(t: Track) -> str:
+    return t.album or UNKNOWN
+
+
+def to_track_row(t: Track) -> TrackRow:
+    return TrackRow(
+        id=t.id,
+        title=_normalize_title(t),
+        artist=_normalize_artist(t),
+        album=_normalize_album(t),
+        year=t.year,
+        source=t.source,
+        source_path=t.source_path,
+        acquisition_state=str(t.acquisition_state),
+        import_state=str(t.import_state),
+        duration_sec=t.duration_sec,
+        mbid=t.mbid,
+        fmt=t.file_format or "",
+        disc=t.disc,
+        disc_total=t.disc_total,
+        track_no=t.track_no,
+        file_size_bytes=t.file_size_bytes,
+        fingerprint_state=str(t.fingerprint_state),
+        deezer_id=t.deezer_id,
+        acoustid=t.acoustid,
+        release_id=t.release_id,
+    )
+
+
+def _clamp_per_page(per_page: int) -> int:
+    return max(1, min(per_page, _MAX_PAGE_SIZE))
+
+
+def _page_offset(page: int, per_page: int) -> int:
+    return (max(1, page) - 1) * per_page
+
+
+def _clamp_page(page: int, total: int, per_page: int) -> int:
+    if total == 0:
+        return 1
+    last = max(1, math.ceil(total / per_page))
+    return min(page, last)
+
+
+async def get_library_stats(db: AsyncSession) -> LibraryStats:
+    artist_expr = _artist_expr()
+    agg = await db.execute(
+        select(
+            func.count(Track.id).label("track_count"),
+            func.count(func.distinct(artist_expr)).label("artist_count"),
+            func.coalesce(func.sum(Track.duration_sec), 0).label("total_duration_sec"),
+        )
+    )
+    row = agg.one()
+    album_count = await _count_album_groups(db)
+
+    src_rows = await db.execute(
+        select(Track.source, func.count(Track.id).label("cnt"))
+        .group_by(Track.source)
+        .order_by(func.count(Track.id).desc())
+    )
+    source_breakdown: dict[str, int] = {r.source: int(r.cnt) for r in src_rows}
+
+    fmt_rows = await db.execute(
+        select(Track.file_format, func.count(Track.id).label("cnt"))
+        .where(Track.file_format.is_not(None))
+        .group_by(Track.file_format)
+        .order_by(func.count(Track.id).desc())
+    )
+    format_breakdown: dict[str, int] = {str(r.file_format): int(r.cnt) for r in fmt_rows}
+
+    total_bytes = int(
+        (await db.scalar(select(func.coalesce(func.sum(Track.file_size_bytes), 0)))) or 0
+    )
+
+    return LibraryStats(
+        track_count=int(row.track_count),
+        artist_count=int(row.artist_count),
+        album_count=album_count,
+        total_duration_sec=int(row.total_duration_sec),
+        total_bytes=total_bytes,
+        format_breakdown=format_breakdown,
+        source_breakdown=source_breakdown,
+    )
+
+
+def _build_library_filters(
+    q: str,
+    artist: str,
+    album: str,
+    source: str,
+    fmt: str,
+) -> list[Any]:
+    artist_expr = _artist_expr()
+    filters: list[Any] = []
+    if q:
+        pattern = f"%{q}%"
+        filters.append(
+            or_(
+                Track.title.ilike(pattern),
+                Track.artist.ilike(pattern),
+                Track.album_artist.ilike(pattern),
+                Track.album.ilike(pattern),
+            )
+        )
+    if artist:
+        filters.append(artist_expr.ilike(f"%{artist}%"))
+    if album:
+        filters.append(Track.album.ilike(f"%{album}%"))
+    if source:
+        filters.append(Track.source == source)
+    if fmt:
+        filters.append(Track.file_format == fmt)
+    return filters
+
+
+async def list_library_tracks(
+    db: AsyncSession,
+    *,
+    q: str = "",
+    artist: str = "",
+    album: str = "",
+    source: str = "",
+    fmt: str = "",
+    sort: str = "added",
+    page: int = 1,
+    per_page: int = _DEFAULT_PAGE_SIZE,
+) -> Page[TrackRow]:
+    per_page = _clamp_per_page(per_page)
+    page = max(1, page)
+    artist_expr = _artist_expr()
+
+    filters = _build_library_filters(q, artist, album, source, fmt)
+
+    count_stmt = select(func.count(Track.id))
+    if filters:
+        count_stmt = count_stmt.where(and_(*filters))
+    total = int((await db.scalar(count_stmt)) or 0)
+
+    page = _clamp_page(page, total, per_page)
+
+    data_stmt = select(Track)
+    if filters:
+        data_stmt = data_stmt.where(and_(*filters))
+
+    valid_sort = sort if sort in _VALID_LIBRARY_SORTS else "added"
+    if valid_sort == "title":
+        data_stmt = data_stmt.order_by(Track.title, Track.id)
+    elif valid_sort == "artist":
+        data_stmt = data_stmt.order_by(artist_expr, Track.title, Track.id)
+    elif valid_sort == "album":
+        data_stmt = data_stmt.order_by(Track.album, Track.track_no, Track.id)
+    elif valid_sort == "year":
+        data_stmt = data_stmt.order_by(Track.year.desc(), Track.album, Track.id)
+    elif valid_sort == "source":
+        data_stmt = data_stmt.order_by(Track.source, Track.id)
+    else:
+        data_stmt = data_stmt.order_by(Track.id.desc())
+
+    data_stmt = data_stmt.offset(_page_offset(page, per_page)).limit(per_page)
+    rows = list((await db.execute(data_stmt)).scalars().all())
+
+    return Page(
+        items=[to_track_row(r) for r in rows],
+        total=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+async def list_distinct_sources(db: AsyncSession) -> list[str]:
+    rows = (await db.execute(select(Track.source).distinct().order_by(Track.source))).scalars()
+    return sorted({str(s) for s in rows})
+
+
+async def list_distinct_formats(db: AsyncSession) -> list[str]:
+    rows = (
+        await db.execute(
+            select(Track.file_format)
+            .where(Track.file_format.is_not(None))
+            .distinct()
+            .order_by(Track.file_format)
+        )
+    ).scalars()
+    return sorted({str(s) for s in rows})
+
+
+async def get_artists_page(
+    db: AsyncSession,
+    *,
+    q: str = "",
+    sort: str = "name",
+    page: int = 1,
+    per_page: int = _DEFAULT_PAGE_SIZE,
+) -> Page[ArtistRow]:
+    per_page = _clamp_per_page(per_page)
+    page = max(1, page)
+    artist_expr = _artist_expr()
+    artist_label = artist_expr.label("display_name")
+
+    track_stats_stmt = select(
+        artist_label,
+        func.count(Track.id).label("track_count"),
+        func.coalesce(func.sum(Track.duration_sec), 0).label("total_duration_sec"),
+        func.min(Track.year).label("min_year"),
+        func.max(Track.year).label("max_year"),
+    ).group_by(artist_expr)
+    if q:
+        track_stats_stmt = track_stats_stmt.where(artist_expr.ilike(f"%{q}%"))
+    track_stats = track_stats_stmt.subquery()
+
+    release_counts = (
+        select(
+            artist_expr.label("display_name"),
+            func.count(func.distinct(Track.release_id)).label("release_count"),
+        )
+        .where(Track.release_id.is_not(None))
+        .group_by(artist_expr)
+        .subquery()
+    )
+    fallback_groups = (
+        select(
+            artist_expr.label("display_name"),
+            _album_expr().label("album"),
+            _year_expr().label("year"),
+        )
+        .where(Track.release_id.is_(None))
+        .group_by(artist_expr, _album_expr(), _year_expr())
+        .subquery()
+    )
+    fallback_counts = (
+        select(
+            fallback_groups.c.display_name,
+            func.count().label("fallback_count"),
+        )
+        .group_by(fallback_groups.c.display_name)
+        .subquery()
+    )
+    album_count_expr = (
+        func.coalesce(release_counts.c.release_count, 0)
+        + func.coalesce(fallback_counts.c.fallback_count, 0)
+    ).label("album_count")
+
+    total = int((await db.scalar(select(func.count()).select_from(track_stats))) or 0)
+    page = _clamp_page(page, total, per_page)
+
+    data_stmt = (
+        select(
+            track_stats.c.display_name,
+            track_stats.c.track_count,
+            album_count_expr,
+            track_stats.c.total_duration_sec,
+            track_stats.c.min_year,
+            track_stats.c.max_year,
+        )
+        .outerjoin(
+            release_counts,
+            release_counts.c.display_name == track_stats.c.display_name,
+        )
+        .outerjoin(
+            fallback_counts,
+            fallback_counts.c.display_name == track_stats.c.display_name,
+        )
+    )
+
+    valid_sort = sort if sort in _VALID_ARTIST_SORTS else "name"
+    if valid_sort == "tracks":
+        data_stmt = data_stmt.order_by(
+            track_stats.c.track_count.desc(), track_stats.c.display_name
+        )
+    elif valid_sort == "albums":
+        data_stmt = data_stmt.order_by(album_count_expr.desc(), track_stats.c.display_name)
+    elif valid_sort == "duration":
+        data_stmt = data_stmt.order_by(
+            track_stats.c.total_duration_sec.desc(), track_stats.c.display_name
+        )
+    else:
+        data_stmt = data_stmt.order_by(track_stats.c.display_name)
+
+    data_stmt = data_stmt.offset(_page_offset(page, per_page)).limit(per_page)
+    artist_rows = (await db.execute(data_stmt)).mappings().all()
+    items = [
+        ArtistRow(
+            display_name=str(row["display_name"]),
+            track_count=int(row["track_count"]),
+            album_count=int(row["album_count"]),
+            total_duration_sec=int(row["total_duration_sec"]),
+            min_year=str(row["min_year"]) if row["min_year"] is not None else None,
+            max_year=str(row["max_year"]) if row["max_year"] is not None else None,
+        )
+        for row in artist_rows
+    ]
+
+    if items:
+        display_names = [item.display_name for item in items]
+        artist_fmt_stmt = (
+            select(artist_expr.label("display_name"), Track.file_format)
+            .where(
+                and_(
+                    artist_expr.in_(display_names),
+                    Track.file_format.is_not(None),
+                )
+            )
+            .distinct()
+            .order_by(artist_expr, Track.file_format)
+        )
+        formats_by_artist: dict[str, list[str]] = {}
+        for fmt_row in (await db.execute(artist_fmt_stmt)).mappings():
+            formats_by_artist.setdefault(str(fmt_row["display_name"]), []).append(
+                str(fmt_row["file_format"])
+            )
+        for item in items:
+            item.formats = formats_by_artist.get(item.display_name, [])
+
+    return Page(items=items, total=total, page=page, per_page=per_page)
+
+
+async def get_artist_detail(
+    db: AsyncSession,
+    *,
+    artist_name: str,
+    page: int = 1,
+    per_page: int = _DEFAULT_PAGE_SIZE,
+) -> ArtistDetail:
+    per_page = _clamp_per_page(per_page)
+    page = max(1, page)
+    artist_expr = _artist_expr()
+
+    count_stmt = select(func.count(Track.id)).where(artist_expr == artist_name)
+    total_tracks = int((await db.scalar(count_stmt)) or 0)
+
+    page = _clamp_page(page, total_tracks, per_page)
+
+    stmt = (
+        select(Track)
+        .options(selectinload(Track.release))
+        .where(artist_expr == artist_name)
+        .order_by(Track.year, Track.album, Track.disc, Track.track_no, Track.title, Track.id)
+        .offset(_page_offset(page, per_page))
+        .limit(per_page)
+    )
+    tracks = list((await db.execute(stmt)).scalars().all())
+
+    total_duration_stmt = select(func.coalesce(func.sum(Track.duration_sec), 0)).where(
+        artist_expr == artist_name
+    )
+    total_duration = int((await db.scalar(total_duration_stmt)) or 0)
+
+    album_count = await _count_album_groups(db, artist_expr == artist_name)
+
+    album_map: dict[tuple[int | None, str | None, str | None], AlbumGroup] = {}
+    for t in tracks:
+        if t.release_id is not None:
+            key: tuple[int | None, str | None, str | None] = (t.release_id, None, None)
+        else:
+            key = (None, t.album or UNKNOWN, t.year or "")
+
+        if key not in album_map:
+            rel = t.release
+            album_map[key] = AlbumGroup(
+                album=(rel.title if rel and rel.title else t.album) or UNKNOWN,
+                year=(rel.year if rel and rel.year else t.year),
+                release_id=t.release_id,
+                release_mbid=rel.release_mbid if rel else None,
+                label=rel.label if rel else None,
+                country=rel.country if rel else None,
+                catalog_number=rel.catalog_number if rel else None,
+            )
+        album_map[key].tracks.append(to_track_row(t))
+
+    total_pages = max(1, math.ceil(total_tracks / per_page))
+
+    return ArtistDetail(
+        display_name=artist_name,
+        track_count=total_tracks,
+        album_count=album_count,
+        total_duration_sec=total_duration,
+        albums=list(album_map.values()),
+        page=page,
+        per_page=per_page,
+        total_track_pages=total_pages,
+        has_prev=page > 1,
+        has_next=page < total_pages,
+    )

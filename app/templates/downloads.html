@@ -9,12 +9,13 @@
   </div>
 </div>
 
-<form method="post" action="/downloads/ui/create" class="form-row" style="margin-bottom:1.5rem;">
+<form method="post" action="/downloads/create" class="form-row" style="margin-bottom:1.5rem;">
   <input type="text" name="query" placeholder="Track or album&hellip;" style="flex:1; min-width:220px;" required>
   <select name="source">
     <option value="slskd">slskd</option>
     <option value="prowlarr">Prowlarr</option>
     <option value="youtube">YouTube</option>
+    <option value="tidal">TIDAL</option>
   </select>
   <button type="submit" class="btn">Enqueue</button>
 </form>

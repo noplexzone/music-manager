@@ -17,14 +17,14 @@ async def test_health_schema(client: AsyncClient) -> None:
     assert isinstance(data["sources"], dict)
 
 
-async def test_health_tidal_always_unavailable(client: AsyncClient) -> None:
+async def test_health_tidal_reports_unconfigured_profile(client: AsyncClient) -> None:
     resp = await client.get("/health")
     data = resp.json()
     assert "tidal" in data["sources"]
     tidal = data["sources"]["tidal"]
     assert tidal["available"] is False
-    assert tidal["details"]["code"] == "backend_not_configured"
-    assert "lawful authenticated external downloader" in tidal["reason"]
+    assert tidal["details"]["code"] == "profile_unconfigured"
+    assert "profile and session paths are required" in tidal["reason"]
 
 
 async def test_health_sources_endpoint(client: AsyncClient) -> None:
