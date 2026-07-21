@@ -10,6 +10,7 @@ from urllib.parse import ParseResult, urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import Settings, get_settings
 from app.database import get_session_factory
@@ -17,6 +18,7 @@ from app.fingerprint.acoustid import fingerprint_file, lookup_acoustid
 from app.metadata.deezer import DeezerClient
 from app.metadata.filename_parse import parse_filename
 from app.metadata.musicbrainz import MusicBrainzClient
+from app.models.catalog_entities import CatalogAlbum, CatalogAlbumTrack
 from app.models.job import Job, JobStatus
 from app.models.path_preview import PathPreview
 from app.models.release import Release
@@ -73,20 +75,34 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
 
     try:
         results = _selected_result(job) or await _fetch_results(job, cfg)
+        catalog_album = await _load_catalog_album(db, job.catalog_album_id)
+        catalog_tracks = list(catalog_album.tracks) if catalog_album is not None else []
         tracks_created = 0
         failures: list[str] = []
         releases: dict[tuple[str | None, str | None], Release] = {}
-        for result in results:
+        for index, result in enumerate(results):
+            catalog_track = _catalog_track_for_result(
+                result, catalog_tracks, index, job.catalog_track_id
+            )
             track: Track | None = None
             try:
-                release_key = (result.artist, result.album or result.title)
+                release_key = (
+                    catalog_album.artist.name if catalog_album is not None else result.artist,
+                    catalog_album.title
+                    if catalog_album is not None
+                    else result.album or result.title,
+                )
                 release = releases.get(release_key)
                 if release is None:
                     release = Release(
                         job_id=job_id,
                         source=result.source,
-                        title=result.album or result.title,
-                        album_artist=result.artist,
+                        title=catalog_album.title
+                        if catalog_album is not None
+                        else result.album or result.title,
+                        album_artist=catalog_album.artist.name
+                        if catalog_album is not None
+                        else result.artist,
                     )
                     db.add(release)
                     await db.flush()
@@ -95,10 +111,27 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
                 track = Track(
                     job_id=job_id,
                     release_id=release.id,
-                    title=result.title,
-                    artist=result.artist,
-                    album_artist=result.artist,
-                    album=result.album,
+                    catalog_album_id=catalog_album.id if catalog_album is not None else None,
+                    catalog_track_id=catalog_track.id if catalog_track is not None else None,
+                    title=catalog_track.title if catalog_track is not None else result.title,
+                    artist=catalog_album.artist.name
+                    if catalog_album is not None
+                    else result.artist,
+                    album_artist=catalog_album.artist.name
+                    if catalog_album is not None
+                    else result.artist,
+                    album=catalog_album.title if catalog_album is not None else result.album,
+                    year=catalog_album.year if catalog_album is not None else None,
+                    disc=catalog_track.disc if catalog_track is not None else None,
+                    track_no=catalog_track.position if catalog_track is not None else None,
+                    duration_sec=catalog_track.duration_sec if catalog_track is not None else None,
+                    mbid=catalog_track.recording_mbid if catalog_track is not None else None,
+                    identity_state=(
+                        IdentityResolutionState.resolved
+                        if (catalog_track and catalog_track.recording_mbid)
+                        or (catalog_album and catalog_album.mbid)
+                        else IdentityResolutionState.unresolved
+                    ),
                     source_path=None,
                     source=result.source,
                     acquisition_state=AcquisitionState.acquiring,
@@ -113,7 +146,8 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
                 track.source_job_id = source_job_id
                 track.source_status = source_status
 
-                await _enrich_musicbrainz(track, cfg)
+                if track.identity_state != IdentityResolutionState.resolved:
+                    await _enrich_musicbrainz(track, cfg)
                 await _enrich_deezer(track, cfg)
                 await _run_fingerprint(track, cfg)
                 await _compute_path_preview(track, db, cfg)
@@ -137,6 +171,17 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
         elif failures:
             job.status = JobStatus.failed
             job.result_json = json.dumps({"tracks_created": tracks_created, "errors": failures})
+        elif catalog_tracks and tracks_created < len(catalog_tracks):
+            job.status = JobStatus.partial
+            acquired_ids = {
+                track.catalog_track_id
+                for track in (await db.scalars(select(Track).where(Track.job_id == job.id))).all()
+                if track.catalog_track_id is not None
+            }
+            missing = [track.title for track in catalog_tracks if track.id not in acquired_ids]
+            job.result_json = json.dumps(
+                {"tracks_created": tracks_created, "missing_tracks": missing}
+            )
         else:
             job.status = JobStatus.done
             job.result_json = json.dumps({"tracks_created": tracks_created})
@@ -171,6 +216,33 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
         job.updated_at = _now()
 
     await db.flush()
+
+
+async def _load_catalog_album(db: AsyncSession, album_id: int | None) -> CatalogAlbum | None:
+    if album_id is None:
+        return None
+    result = await db.execute(
+        select(CatalogAlbum)
+        .where(CatalogAlbum.id == album_id)
+        .options(selectinload(CatalogAlbum.artist), selectinload(CatalogAlbum.tracks))
+    )
+    return result.scalar_one_or_none()
+
+
+def _catalog_track_for_result(
+    result: SearchResult,
+    tracks: list[CatalogAlbumTrack],
+    index: int,
+    selected_track_id: int | None,
+) -> CatalogAlbumTrack | None:
+    if selected_track_id is not None:
+        return next((track for track in tracks if track.id == selected_track_id), None)
+    title = (result.title or "").casefold().strip()
+    if title:
+        for track in tracks:
+            if track.title.casefold().strip() == title:
+                return track
+    return tracks[index] if index < len(tracks) else None
 
 
 def _selected_result(job: Job) -> list[SearchResult] | None:

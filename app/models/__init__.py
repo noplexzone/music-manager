@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.models.auth import AppUser, AuthSession, UserRole
+from app.models.catalog_entities import CatalogAlbum, CatalogAlbumTrack, CatalogArtist
 from app.models.import_plan import ImportPlan
 from app.models.job import Job
 from app.models.monitoring import MonitoringRecord
@@ -14,6 +15,9 @@ __all__ = [
     "AppSetting",
     "AppUser",
     "AuthSession",
+    "CatalogAlbum",
+    "CatalogAlbumTrack",
+    "CatalogArtist",
     "ImportPlan",
     "Job",
     "MonitoringRecord",
