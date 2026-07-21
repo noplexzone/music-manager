@@ -15,6 +15,7 @@ from app.models.auth import AppUser
 from app.schemas.health import SourceStatus
 from app.schemas.settings import SettingField, SettingsSaveRequest, SettingsTestRequest
 from app.settings_service import (
+    DEFAULT_METADATA_PROVIDERS,
     DEFAULT_SOURCE_PRIORITY,
     get_all_effective,
     get_runtime_settings,
@@ -83,6 +84,8 @@ async def settings_page(
             "settings": fields,
             "runtime": runtime,
             "default_sources": DEFAULT_SOURCE_PRIORITY,
+            "default_metadata_providers": DEFAULT_METADATA_PROVIDERS,
+            "saved": request.query_params.get("saved", ""),
         },
     )
 
@@ -94,13 +97,77 @@ async def save_runtime_settings_page(
     _user: Annotated[object, Depends(require_mutation)],
 ) -> RedirectResponse:
     form = await request.form()
+    runtime = await get_runtime_settings(db)
     order = [str(v) for v in form.getlist("source_order")]
     enabled = {str(v) for v in form.getlist("source_enabled")}
     source_priority = [{"name": name, "enabled": name in enabled} for name in order]
-    limit = int(str(form.get("free_text_result_limit", "10")) or "10")
-    await save_runtime_settings(db, source_priority, limit)
+    metadata_order = [str(v) for v in form.getlist("metadata_order")]
+    metadata_enabled = {str(v) for v in form.getlist("metadata_enabled")}
+    metadata_providers = (
+        [{"name": name, "enabled": name in metadata_enabled} for name in metadata_order]
+        if metadata_order
+        else runtime.metadata_providers
+    )
+    limit = int(str(form.get("free_text_result_limit", runtime.free_text_result_limit)) or "10")
+    await save_runtime_settings(
+        db, source_priority or runtime.source_priority, limit, metadata_providers
+    )
     await db.commit()
-    return RedirectResponse("/settings", status_code=303)
+    section = str(form.get("section", ""))
+    suffix = f"?saved={section}#{section}" if section else "?saved=1"
+    return RedirectResponse(f"/settings{suffix}", status_code=303)
+
+
+@router.post("/settings/save", include_in_schema=False)
+async def save_settings_page(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    env: Annotated[Settings, Depends(get_settings)],
+    _user: Annotated[object, Depends(require_mutation)],
+) -> RedirectResponse:
+    form = await request.form()
+    section = str(form.get("section", "settings"))
+    allowed = set(SettingsSaveRequest.model_fields)
+    updates = {str(key): str(value) for key, value in form.items() if str(key) in allowed}
+    await save_settings(db, updates, env)
+    await db.commit()
+    return RedirectResponse(f"/settings?saved={section}#{section}", status_code=303)
+
+
+@router.post("/settings/test", include_in_schema=False)
+async def test_provider_page(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    env: Annotated[Settings, Depends(get_settings)],
+    _user: Annotated[object, Depends(require_mutation)],
+) -> RedirectResponse:
+    form = await request.form()
+    provider = str(form.get("provider", ""))
+    raw_db = await load_raw_db_values(db, env.secret_key)
+
+    def _r(key: str) -> str:
+        return resolve_for_probe(key, str(form.get(key, "")), env, raw_db)
+
+    if provider == "tidal":
+        cap = await TidalAdapter(
+            _r("tidal_config_path"), _r("tidal_session_path"), _r("tidal_quality")
+        ).health()
+        status = SourceStatus(available=cap.available, reason=cap.reason, details=cap.extra)
+    elif provider == "youtube":
+        status = await _probe_provider("youtube", url="", key="", cookies=_r("ytdlp_cookies_file"))
+    elif provider in {"slskd", "prowlarr", "sabnzbd"}:
+        status = await _probe_provider(
+            provider,
+            url=_r(f"{provider}_url"),
+            key=_r(f"{provider}_api_key"),
+            cookies="",
+        )
+    else:
+        status = SourceStatus(available=False, reason="Unknown provider", details={})
+    result = "ok" if status.available else (status.reason or "failed")
+    return RedirectResponse(
+        f"/settings?test={provider}:{result}#provider-{provider}", status_code=303
+    )
 
 
 @router.get("/api/settings", response_model=dict[str, SettingField])

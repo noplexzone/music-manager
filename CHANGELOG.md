@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-20
+
+### Added
+
+- Added catalog metadata provider abstraction for MusicBrainz, Deezer, and keyless iTunes artist/discography/album lookup with per-provider TTL caches and provider health states.
+- Added catalog artist, album, and album-track persistence plus nullable catalog foreign keys on jobs and tracks in Alembic migration 0010.
+- Added default Catalog search tab, catalog artist discography pages, catalog album tracklist pages, and catalog album/track download entry points.
+- Added catalog-linked acquisition metadata so downloads and tracks can retain selected catalog album/track context and report partial albums with missing tracks.
+
+### Changed
+
+- Moved raw source search into an Advanced tab with Fix in Settings diagnostics for unavailable sources.
+- Reworked Settings into separate native server-rendered sections for download source priority, client/provider connection cards, metadata providers, library paths/templates, and behavior settings.
+- Version bumped to 0.3.0 for the catalog-search release line.
+
 ## [0.2.1] - 2026-07-20
 
 ### Fixed
@@ -107,7 +122,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Hardened job source validation, Prowlarr NZB URL trust checks, YouTube search timeout behavior, Docker build context exclusions, and filename extension preservation
 
-[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/noplexzone/music-manager/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/noplexzone/music-manager/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/noplexzone/music-manager/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/noplexzone/music-manager/compare/v0.1.3...v0.2.0
 [0.1.2]: https://github.com/noplexzone/music-manager/compare/v0.1.1...v0.1.2

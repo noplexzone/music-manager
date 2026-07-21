@@ -1,218 +1,63 @@
 {% extends "base.html" %}
 {% block title %}Settings — Music Manager{% endblock %}
+{% macro csrf() -%}<input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">{%- endmacro %}
+{% macro locked(name) -%}{% if settings[name].locked_by_environment %}<span class="lock-badge">env</span>{% endif %}{%- endmacro %}
+{% macro text_field(name, label, kind='text') -%}
+<label>{{ label }}
+  <input name="{{ name }}" type="{{ kind }}" value="{{ '' if kind == 'password' else settings[name].value }}" placeholder="{% if kind == 'password' and settings[name].configured %}value is set{% elif kind == 'password' %}not set{% endif %}" {% if settings[name].locked_by_environment %}disabled title="Set by environment"{% endif %}>
+  {{ locked(name) }}
+</label>
+{%- endmacro %}
 {% block content %}
-<header class="page-header">
-  <div><p class="eyebrow">Configuration</p><h1>Settings</h1><p>Manage local paths and provider connections without exposing stored credentials.</p></div>
-</header>
-<div class="alert info" role="note"><strong>Credential safety:</strong> environment values are locked and secret values remain masked. Leave a secret blank to keep it unchanged.</div>
+<header class="page-header"><div><p class="eyebrow">Configuration</p><h1>Settings</h1><p>Separate saves keep source priority, credentials, metadata, library paths, and behavior understandable.</p></div></header>
+{% if saved %}<div class="alert ok">Saved {{ saved }}.</div>{% endif %}
+{% if request.query_params.get('test') %}<div class="alert info">Connection test: {{ request.query_params.get('test') }}</div>{% endif %}
+<div class="alert info"><strong>Credential safety:</strong> secret fields show whether a value is set, but never echo the stored secret. Leave blank to keep unchanged.</div>
 
-<form id="settings-form" method="post" action="/api/settings/save" data-custom-submit="true">
+<nav class="tabs" style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">
+  <a class="btn secondary" href="#download-sources">Download sources</a>
+  <a class="btn secondary" href="#download-clients">Download clients</a>
+  <a class="btn secondary" href="#metadata-providers">Metadata providers</a>
+  <a class="btn secondary" href="#library">Library</a>
+  <a class="btn secondary" href="#behavior">Behavior</a>
+</nav>
 
-<section class="card">
-  <h2>slskd (Soulseek)</h2>
-  <label>URL
-    <input name="slskd_url" value="{{ settings.slskd_url.value }}"
-      {% if settings.slskd_url.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.slskd_url.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <label>API Key
-    <input name="slskd_api_key" type="password"
-      placeholder="{% if settings.slskd_api_key.configured %}(configured){% else %}not set{% endif %}"
-      {% if settings.slskd_api_key.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.slskd_api_key.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <button type="button" class="secondary" data-test-provider="slskd">Test connection</button>
-  <span class="test-result" id="test-slskd"></span>
+<section id="download-sources" class="card">
+  <h2>Download sources</h2>
+  <p class="hint">Priority controls fallback order: Music Manager tries enabled sources top-to-bottom.</p>
+  <form method="post" action="/settings">
+    {{ csrf() }}<input type="hidden" name="section" value="download-sources">
+    <div class="table-wrap"><table><thead><tr><th>Priority</th><th>Source</th><th>Enabled</th></tr></thead><tbody>
+    {% for item in runtime.source_priority %}<tr><td>{{ loop.index }}</td><td><input type="hidden" name="source_order" value="{{ item.name }}"><code>{{ item.name }}</code> <span class="badge info">status checked during search</span></td><td><label><input type="checkbox" name="source_enabled" value="{{ item.name }}" {% if item.enabled %}checked{% endif %}> Enabled</label></td></tr>{% endfor %}
+    </tbody></table></div>
+    <button type="submit" class="btn">Save download sources</button>
+  </form>
 </section>
 
-<section class="card">
-  <h2>Prowlarr</h2>
-  <label>URL
-    <input name="prowlarr_url" value="{{ settings.prowlarr_url.value }}"
-      {% if settings.prowlarr_url.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.prowlarr_url.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <label>API Key
-    <input name="prowlarr_api_key" type="password"
-      placeholder="{% if settings.prowlarr_api_key.configured %}(configured){% else %}not set{% endif %}"
-      {% if settings.prowlarr_api_key.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.prowlarr_api_key.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <button type="button" class="secondary" data-test-provider="prowlarr">Test connection</button>
-  <span class="test-result" id="test-prowlarr"></span>
+<section id="download-clients" class="card">
+  <h2>Download clients / providers</h2>
+  {% for provider in ['slskd', 'prowlarr', 'sabnzbd'] %}
+  <article id="provider-{{ provider }}" class="card">
+    <h3>{{ provider }}</h3>
+    <form method="post" action="/settings/save">{{ csrf() }}<input type="hidden" name="section" value="provider-{{ provider }}">{{ text_field(provider ~ '_url', 'URL') }}{{ text_field(provider ~ '_api_key', 'API key', 'password') }}<button class="btn" type="submit">Save {{ provider }}</button></form>
+    <form method="post" action="/settings/test" style="margin-top:0.5rem;">{{ csrf() }}<input type="hidden" name="provider" value="{{ provider }}"><input type="hidden" name="{{ provider }}_url" value="{{ settings[provider ~ '_url'].value }}"><button class="btn secondary" type="submit" data-test-provider="{{ provider }}">Test connection</button></form>
+  </article>
+  {% endfor %}
+  <article id="provider-youtube" class="card"><h3>yt-dlp / YouTube</h3><form method="post" action="/settings/save">{{ csrf() }}<input type="hidden" name="section" value="provider-youtube">{{ text_field('ytdlp_cookies_file', 'Cookies file path') }}<button class="btn" type="submit">Save yt-dlp</button></form><form method="post" action="/settings/test">{{ csrf() }}<input type="hidden" name="provider" value="youtube"><button class="btn secondary" type="submit" data-test-provider="youtube">Test connection</button></form></article>
+  <article id="provider-tidal" class="card"><h3>TIDAL / tidal-dl</h3><p class="hint">Supports a direct TIDAL track URL. Direct TIDAL URL downloads require an authenticated tidal-dl profile with <code>.tidal-dl.json</code> and <code>.tidal-dl.token.json</code> in the same persistent directory.</p><form method="post" action="/settings/save">{{ csrf() }}<input type="hidden" name="section" value="provider-tidal">{{ text_field('tidal_config_path', 'Config path') }}{{ text_field('tidal_session_path', 'Session path') }}<label>Quality<select name="tidal_quality"><option value="" {% if not settings.tidal_quality.value %}selected{% endif %}>Default</option>{% for quality in ['Normal', 'High', 'HiFi', 'Master'] %}<option value="{{ quality }}" {% if settings.tidal_quality.value == quality %}selected{% endif %}>{{ quality }}</option>{% endfor %}</select></label><button class="btn" type="submit">Save TIDAL</button></form><form method="post" action="/settings/test">{{ csrf() }}<input type="hidden" name="provider" value="tidal"><button class="btn secondary" type="submit" data-test-provider="tidal">Test local readiness</button></form></article>
 </section>
 
-<section class="card">
-  <h2>SABnzbd</h2>
-  <label>URL
-    <input name="sabnzbd_url" value="{{ settings.sabnzbd_url.value }}"
-      {% if settings.sabnzbd_url.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.sabnzbd_url.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <label>API Key
-    <input name="sabnzbd_api_key" type="password"
-      placeholder="{% if settings.sabnzbd_api_key.configured %}(configured){% else %}not set{% endif %}"
-      {% if settings.sabnzbd_api_key.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.sabnzbd_api_key.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <button type="button" class="secondary" data-test-provider="sabnzbd">Test connection</button>
-  <span class="test-result" id="test-sabnzbd"></span>
+<section id="metadata-providers" class="card">
+  <h2>Metadata providers</h2><p class="hint">MusicBrainz remains canonical for MBIDs. Contact is required by MusicBrainz API etiquette.</p>
+  <form method="post" action="/settings">
+    {{ csrf() }}<input type="hidden" name="section" value="metadata-providers">
+    {% for item in runtime.metadata_providers %}<label><input type="hidden" name="metadata_order" value="{{ item.name }}"><input type="checkbox" name="metadata_enabled" value="{{ item.name }}" {% if item.enabled %}checked{% endif %}> {{ item.name }}</label>{% endfor %}
+    <button class="btn" type="submit">Save metadata providers</button>
+  </form>
+  <form method="post" action="/settings/save" style="margin-top:1rem;">{{ csrf() }}<input type="hidden" name="section" value="metadata-providers">{{ text_field('musicbrainz_contact', 'MusicBrainz contact email') }}{{ text_field('acoustid_api_key', 'AcoustID API key', 'password') }}<button class="btn secondary" type="submit">Save metadata credentials</button></form>
 </section>
 
-<section class="card">
-  <h2>YouTube / yt-dlp</h2>
-  <label>Cookies file path
-    <input name="ytdlp_cookies_file" value="{{ settings.ytdlp_cookies_file.value }}"
-      {% if settings.ytdlp_cookies_file.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.ytdlp_cookies_file.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <button type="button" class="secondary" data-test-provider="youtube">Test connection</button>
-  <span class="test-result" id="test-youtube"></span>
-</section>
+<section id="library" class="card"><h2>Library</h2><form method="post" action="/settings/save">{{ csrf() }}<input type="hidden" name="section" value="library">{{ text_field('library_root', 'Library root') }}{{ text_field('staging_root', 'Staging root') }}{{ text_field('naming_template', 'Naming template') }}<p class="hint">Preview: Queen/1975 - A Night at the Opera/11 - Bohemian Rhapsody.flac</p><button class="btn" type="submit">Save library</button></form></section>
 
-<section class="card">
-  <h2>TIDAL / tidal-dl</h2>
-  <p class="hint">Supports a direct TIDAL track URL download through tidal-dl. Configure files named exactly <code>.tidal-dl.json</code> and <code>.tidal-dl.token.json</code> in the same persistent directory. Authenticate once with tidal-dl outside this app.</p>
-  <label>Config path
-    <input name="tidal_config_path" value="{{ settings.tidal_config_path.value }}"
-      {% if settings.tidal_config_path.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-  </label>
-  <label>Session path
-    <input name="tidal_session_path" value="{{ settings.tidal_session_path.value }}"
-      {% if settings.tidal_session_path.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-  </label>
-  <label>Quality
-    <select name="tidal_quality" {% if settings.tidal_quality.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-      <option value="" {% if not settings.tidal_quality.value %}selected{% endif %}>Default</option>
-      {% for quality in ["Normal", "High", "HiFi", "Master"] %}
-      <option value="{{ quality }}" {% if settings.tidal_quality.value == quality %}selected{% endif %}>{{ quality }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <button type="button" class="secondary" data-test-provider="tidal">Test local readiness</button>
-  <span class="test-result" id="test-tidal"></span>
-</section>
-
-<section class="card">
-  <h2>Metadata</h2>
-  <label>MusicBrainz contact email
-    <input name="musicbrainz_contact" value="{{ settings.musicbrainz_contact.value }}"
-      {% if settings.musicbrainz_contact.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.musicbrainz_contact.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <label>AcoustID API key
-    <input name="acoustid_api_key" type="password"
-      placeholder="{% if settings.acoustid_api_key.configured %}(configured){% else %}not set{% endif %}"
-      {% if settings.acoustid_api_key.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.acoustid_api_key.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-</section>
-
-<section class="card">
-  <h2>Library</h2>
-  <label>Library root
-    <input name="library_root" value="{{ settings.library_root.value }}"
-      {% if settings.library_root.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.library_root.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <label>Staging root
-    <input name="staging_root" value="{{ settings.staging_root.value }}"
-      {% if settings.staging_root.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.staging_root.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-  <label>Naming template
-    <input name="naming_template" value="{{ settings.naming_template.value }}"
-      {% if settings.naming_template.locked_by_environment %}disabled title="Set via environment variable"{% endif %}>
-    {% if settings.naming_template.locked_by_environment %}<span class="lock-badge">env</span>{% endif %}
-  </label>
-</section>
-
-<button type="submit">Save settings</button>
-<span id="settings-save-result" class="test-result" role="status"></span>
-</form>
-
-<form method="post" action="/settings" class="card">
-  <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
-  <h2>Download source priority</h2>
-  <p class="hint">Rows are attempted top-to-bottom for search grouping and acquisition fallback. TIDAL is disabled by default until explicitly enabled here and configured above.</p>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Order</th><th>Source</th><th>Enabled</th></tr></thead>
-      <tbody>
-      {% for item in runtime.source_priority %}
-        <tr>
-          <td>{{ loop.index }}</td>
-          <td>
-            <input type="hidden" name="source_order" value="{{ item.name }}">
-            <code>{{ item.name }}</code>
-          </td>
-          <td><label><input type="checkbox" name="source_enabled" value="{{ item.name }}" {% if item.enabled %}checked{% endif %}> Enabled</label></td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <label>Free-text result cap
-    <input type="number" name="free_text_result_limit" min="1" max="100" value="{{ runtime.free_text_result_limit }}">
-  </label>
-  <button type="submit">Save download settings</button>
-</form>
-
-<script>
-const settingsForm = document.getElementById("settings-form");
-settingsForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const resultEl = document.getElementById("settings-save-result");
-  resultEl.textContent = "Saving…";
-  const csrf = document.cookie.split("; ").find((p) => p.startsWith("csrf="))?.split("=")[1];
-  const data = Object.fromEntries(new FormData(settingsForm));
-  try {
-    const response = await fetch(settingsForm.action, {
-      method: "POST",
-      headers: {"Content-Type": "application/json", "X-CSRF-Token": decodeURIComponent(csrf || "")},
-      body: JSON.stringify(data),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : "Save failed");
-    resultEl.textContent = "✓ Settings saved";
-    resultEl.className = "test-result ok";
-  } catch (error) {
-    resultEl.textContent = "✗ " + (error instanceof Error ? error.message : "Save failed");
-    resultEl.className = "test-result err";
-  }
-});
-
-document.querySelectorAll("[data-test-provider]").forEach((btn) => {
-  btn.addEventListener("click", async () => {
-    const provider = btn.dataset.testProvider;
-    const resultEl = document.getElementById("test-" + provider);
-    resultEl.textContent = "Testing…";
-    const csrf = document.cookie.split("; ").find((p) => p.startsWith("csrf="))?.split("=")[1];
-    const form = btn.closest("form");
-    const formData = new FormData(form);
-    const body = {provider};
-    const fieldMap = {
-      slskd: ["slskd_url", "slskd_api_key"],
-      prowlarr: ["prowlarr_url", "prowlarr_api_key"],
-      sabnzbd: ["sabnzbd_url", "sabnzbd_api_key"],
-      youtube: ["ytdlp_cookies_file"],
-      tidal: ["tidal_config_path", "tidal_session_path", "tidal_quality"],
-    };
-    (fieldMap[provider] || []).forEach((f) => { body[f] = formData.get(f) || ""; });
-    try {
-      const resp = await fetch("/api/settings/test", {
-        method: "POST",
-        headers: {"Content-Type": "application/json", "X-CSRF-Token": decodeURIComponent(csrf || "")},
-        body: JSON.stringify(body),
-      });
-      const data = await resp.json();
-      resultEl.textContent = data.available ? "✓ Connected" : "✗ " + (data.reason || "Failed");
-      resultEl.className = "test-result " + (data.available ? "ok" : "err");
-    } catch {
-      resultEl.textContent = "✗ Request failed";
-      resultEl.className = "test-result err";
-    }
-  });
-});
-</script>
+<section id="behavior" class="card"><h2>Behavior</h2><form method="post" action="/settings">{{ csrf() }}<input type="hidden" name="section" value="behavior"><label>Free-text result cap<input type="number" name="free_text_result_limit" min="1" max="100" value="{{ runtime.free_text_result_limit }}"></label><button class="btn" type="submit">Save behavior</button></form></section>
 {% endblock %}

@@ -4,12 +4,13 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.catalog_entities import CatalogAlbum, CatalogAlbumTrack
     from app.models.release import Release
     from app.models.track import Track
 
@@ -43,10 +44,22 @@ class Job(Base):
     )
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     selected_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    catalog_album_id: Mapped[int | None] = mapped_column(
+        ForeignKey("catalog_albums.id", ondelete="SET NULL"), nullable=True
+    )
+    catalog_track_id: Mapped[int | None] = mapped_column(
+        ForeignKey("catalog_album_tracks.id", ondelete="SET NULL"), nullable=True
+    )
 
     tracks: Mapped[list[Track]] = relationship(
         "Track", back_populates="job", cascade="all, delete-orphan"
     )
     releases: Mapped[list[Release]] = relationship(
         "Release", back_populates="job", cascade="all, delete-orphan"
+    )
+    catalog_album: Mapped[CatalogAlbum | None] = relationship(
+        "CatalogAlbum", back_populates="jobs"
+    )
+    catalog_track: Mapped[CatalogAlbumTrack | None] = relationship(
+        "CatalogAlbumTrack", back_populates="jobs"
     )

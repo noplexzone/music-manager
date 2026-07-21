@@ -29,6 +29,12 @@ DEFAULT_SOURCE_PRIORITY: list[dict[str, object]] = [
     {"name": "tidal", "enabled": False},
 ]
 VALID_SOURCES = {str(item["name"]) for item in DEFAULT_SOURCE_PRIORITY}
+DEFAULT_METADATA_PROVIDERS: list[dict[str, object]] = [
+    {"name": "musicbrainz", "enabled": True},
+    {"name": "deezer", "enabled": True},
+    {"name": "itunes", "enabled": True},
+]
+VALID_METADATA_PROVIDERS = {str(item["name"]) for item in DEFAULT_METADATA_PROVIDERS}
 DEFAULT_FREE_TEXT_RESULT_LIMIT = 10
 _cache: dict[str, str] | None = None
 
@@ -37,10 +43,17 @@ _cache: dict[str, str] | None = None
 class RuntimeSettings:
     source_priority: list[dict[str, object]]
     free_text_result_limit: int
+    metadata_providers: list[dict[str, object]]
 
     @property
     def enabled_sources(self) -> list[str]:
         return [str(item["name"]) for item in self.source_priority if item.get("enabled") is True]
+
+    @property
+    def enabled_metadata_providers(self) -> list[str]:
+        return [
+            str(item["name"]) for item in self.metadata_providers if item.get("enabled") is True
+        ]
 
 
 async def _load_runtime(db: AsyncSession) -> dict[str, str]:
@@ -51,10 +64,10 @@ async def _load_runtime(db: AsyncSession) -> dict[str, str]:
     return dict(_cache)
 
 
-def _normalize_priority(raw: object) -> list[dict[str, object]]:
-    enabled_by_name = {
-        str(item["name"]): bool(item.get("enabled", True)) for item in DEFAULT_SOURCE_PRIORITY
-    }
+def _normalize_order(
+    raw: object, defaults: list[dict[str, object]], valid_names: set[str]
+) -> list[dict[str, object]]:
+    enabled_by_name = {str(item["name"]): bool(item.get("enabled", True)) for item in defaults}
     order: list[str] = []
     if isinstance(raw, list):
         for item in raw:
@@ -64,14 +77,22 @@ def _normalize_priority(raw: object) -> list[dict[str, object]]:
                 name, enabled = str(item.get("name", "")), bool(item.get("enabled", True))
             else:
                 continue
-            if name in VALID_SOURCES and name not in order:
+            if name in valid_names and name not in order:
                 order.append(name)
                 enabled_by_name[name] = enabled
-    for item in DEFAULT_SOURCE_PRIORITY:
+    for item in defaults:
         name = str(item["name"])
         if name not in order:
             order.append(name)
     return [{"name": name, "enabled": enabled_by_name[name]} for name in order]
+
+
+def _normalize_priority(raw: object) -> list[dict[str, object]]:
+    return _normalize_order(raw, DEFAULT_SOURCE_PRIORITY, VALID_SOURCES)
+
+
+def _normalize_metadata_providers(raw: object) -> list[dict[str, object]]:
+    return _normalize_order(raw, DEFAULT_METADATA_PROVIDERS, VALID_METADATA_PROVIDERS)
 
 
 async def get_runtime_settings(db: AsyncSession) -> RuntimeSettings:
@@ -81,20 +102,35 @@ async def get_runtime_settings(db: AsyncSession) -> RuntimeSettings:
     except json.JSONDecodeError:
         priority_raw = []
     try:
+        metadata_raw = json.loads(values.get("metadata_providers", "[]"))
+    except json.JSONDecodeError:
+        metadata_raw = []
+    try:
         limit = int(values.get("free_text_result_limit", str(DEFAULT_FREE_TEXT_RESULT_LIMIT)))
     except ValueError:
         limit = DEFAULT_FREE_TEXT_RESULT_LIMIT
-    return RuntimeSettings(_normalize_priority(priority_raw), max(1, min(limit, 100)))
+    return RuntimeSettings(
+        _normalize_priority(priority_raw),
+        max(1, min(limit, 100)),
+        _normalize_metadata_providers(metadata_raw),
+    )
 
 
 async def save_runtime_settings(
-    db: AsyncSession, source_priority: list[dict[str, object]], free_text_result_limit: int
+    db: AsyncSession,
+    source_priority: list[dict[str, object]],
+    free_text_result_limit: int,
+    metadata_providers: list[dict[str, object]] | None = None,
 ) -> None:
     global _cache
     normalized = _normalize_priority(source_priority)
+    metadata_normalized = _normalize_metadata_providers(
+        metadata_providers if metadata_providers is not None else []
+    )
     payloads = {
         "source_priority": json.dumps(normalized),
         "free_text_result_limit": str(max(1, min(free_text_result_limit, 100))),
+        "metadata_providers": json.dumps(metadata_normalized),
     }
     for key, value in payloads.items():
         setting = await db.get(AppSetting, key)

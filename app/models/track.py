@@ -11,6 +11,7 @@ from app.database import Base
 from app.models.workflow import AcquisitionState, ImportWorkflowState
 
 if TYPE_CHECKING:
+    from app.models.catalog_entities import CatalogAlbum, CatalogAlbumTrack
     from app.models.import_plan import ImportPlan
     from app.models.job import Job
     from app.models.path_preview import PathPreview
@@ -38,6 +39,12 @@ class Track(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     release_id: Mapped[int | None] = mapped_column(
         ForeignKey("releases.id", ondelete="SET NULL"), nullable=True
+    )
+    catalog_album_id: Mapped[int | None] = mapped_column(
+        ForeignKey("catalog_albums.id", ondelete="SET NULL"), nullable=True
+    )
+    catalog_track_id: Mapped[int | None] = mapped_column(
+        ForeignKey("catalog_album_tracks.id", ondelete="SET NULL"), nullable=True
     )
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     artist: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -86,6 +93,12 @@ class Track(Base):
 
     job: Mapped[Job] = relationship("Job", back_populates="tracks")
     release: Mapped[Release | None] = relationship("Release", back_populates="tracks")
+    catalog_album: Mapped[CatalogAlbum | None] = relationship(
+        "CatalogAlbum", back_populates="library_tracks"
+    )
+    catalog_track: Mapped[CatalogAlbumTrack | None] = relationship(
+        "CatalogAlbumTrack", back_populates="library_tracks"
+    )
     path_previews: Mapped[list[PathPreview]] = relationship(
         "PathPreview", back_populates="track", cascade="all, delete-orphan"
     )

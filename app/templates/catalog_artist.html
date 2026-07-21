@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ artist.name }} – Catalog{% endblock %}
+{% block content %}
+<header class="page-header">
+  <p class="eyebrow">Catalog artist</p>
+  <h1>{{ artist.name }}</h1>
+  {% if artist.mbid %}<p><span class="badge ok">MusicBrainz resolved</span> <code>{{ artist.mbid }}</code></p>{% else %}<p><span class="badge warn">Unresolved MBID</span></p>{% endif %}
+</header>
+<form method="get" action="/artists/catalog/{{ artist.id }}" class="form-row" style="margin-bottom:1rem;">
+  <select name="release_type">
+    <option value="" {% if not release_type %}selected{% endif %}>All release types</option>
+    {% for rt in release_types %}<option value="{{ rt }}" {% if release_type == rt %}selected{% endif %}>{{ rt }}</option>{% endfor %}
+  </select>
+  <button class="btn secondary" type="submit">Filter</button>
+</form>
+{% if albums %}
+<div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1rem;">
+{% for album in albums %}
+  <article class="card">
+    {% if album.artwork_url %}<img src="{{ album.artwork_url | e }}" alt="" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:0.5rem;">{% endif %}
+    <h3><a href="/albums/{{ album.id }}">{{ album.title }}</a></h3>
+    <p>{{ album.year or 'Unknown year' }} · {{ album.release_type or 'release' }} · {{ album.track_count or '?' }} tracks</p>
+    <form method="post" action="/albums/{{ album.id }}/download">
+      <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
+      <button type="submit" class="btn secondary">Download album</button>
+    </form>
+  </article>
+{% endfor %}
+</div>
+{% else %}<div class="empty-state"><h3>No releases found</h3><p>Try another filter or provider result.</p></div>{% endif %}
+{% endblock %}

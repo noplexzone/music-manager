@@ -14,6 +14,7 @@ from app.config import Settings
 from app.database import get_db
 from app.schemas.health import SourceStatus
 from app.schemas.search import SearchRequest, SearchResponse, SearchResult
+from app.services.catalog_metadata import search_catalog_artists
 from app.settings_service import effective_settings_dep, get_runtime_settings
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
@@ -115,12 +116,39 @@ async def search(
 
 
 @router.get("/search", response_class=HTMLResponse)
-async def search_page(request: Request) -> HTMLResponse:
+async def search_page(
+    request: Request,
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    q: str = "",
+    tab: str = "catalog",
+    provider: str = "all",
+) -> HTMLResponse:
     templates = _get_templates(request)
+    runtime = await get_runtime_settings(db)
+    metadata_providers = runtime.enabled_metadata_providers
+    requested = metadata_providers if provider == "all" else [provider]
+    catalog_outcomes = []
+    if q and metadata_providers:
+        catalog_outcomes = await search_catalog_artists(settings, q, requested)
     return templates.TemplateResponse(
         request,
         "search.html",
-        {"results": None, "query": "", "artist": "", "album": "", "track": "", "error": None},
+        {
+            "tab": tab,
+            "catalog_query": q,
+            "catalog_provider": provider,
+            "metadata_providers": runtime.metadata_providers,
+            "catalog_outcomes": catalog_outcomes,
+            "metadata_enabled": metadata_providers,
+            "results": None,
+            "source_states": {},
+            "query": "",
+            "artist": "",
+            "album": "",
+            "track": "",
+            "error": None,
+        },
     )
 
 
@@ -150,6 +178,12 @@ async def search_ui(
             request,
             "search.html",
             {
+                "tab": "advanced",
+                "catalog_query": "",
+                "catalog_provider": "all",
+                "metadata_providers": runtime.metadata_providers,
+                "catalog_outcomes": [],
+                "metadata_enabled": runtime.enabled_metadata_providers,
                 "results": None,
                 "query": "",
                 "artist": artist,
@@ -185,6 +219,12 @@ async def search_ui(
         request,
         "search.html",
         {
+            "tab": "advanced",
+            "catalog_query": "",
+            "catalog_provider": "all",
+            "metadata_providers": runtime.metadata_providers,
+            "catalog_outcomes": [],
+            "metadata_enabled": runtime.enabled_metadata_providers,
             "results": all_results,
             "source_states": source_states,
             "query": query_str,

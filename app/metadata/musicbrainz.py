@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from typing import cast
 
 import httpx
 from tenacity import (
@@ -11,6 +12,9 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+from app.metadata.base import AlbumDetail, AlbumHit, AlbumTrack, ArtistDetail, ArtistHit, TTLCache
+from app.sources.base import CapabilityState
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +73,11 @@ def _is_503(exc: BaseException) -> bool:
 
 
 class MusicBrainzClient:
+    name = "musicbrainz"
+
     def __init__(self, user_agent: str) -> None:
         self._user_agent = user_agent
+        self._cache = TTLCache()
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -96,6 +103,115 @@ class MusicBrainzClient:
     )
     async def _get_with_retry(self, path: str, params: dict[str, str]) -> httpx.Response:
         return await self._get(path, params)
+
+    async def health(self) -> CapabilityState:
+        return CapabilityState(
+            available=bool(self._user_agent),
+            reason=None if self._user_agent else "MusicBrainz contact is required",
+        )
+
+    async def search_artists(self, query: str) -> list[ArtistHit]:
+        cache_key = f"artist-search:{query}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return list(cast(list[ArtistHit], cached))
+        lucene = f'artist:"{escape_lucene(query)}"'
+        resp = await self._get_with_retry(
+            "/artist", {"query": lucene, "limit": "10", "fmt": "json"}
+        )
+        resp.raise_for_status()
+        hits = [
+            _parse_artist_hit(item)
+            for item in resp.json().get("artists", [])
+            if isinstance(item, dict)
+        ]
+        self._cache.set(cache_key, hits, 15 * 60)
+        return hits
+
+    async def get_artist(self, id: str) -> ArtistDetail:
+        cache_key = f"artist:{id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cast(ArtistDetail, cached)
+        resp = await self._get_with_retry(f"/artist/{id}", {"fmt": "json"})
+        resp.raise_for_status()
+        detail = _parse_artist_detail(resp.json())
+        self._cache.set(cache_key, detail, 24 * 60 * 60)
+        return detail
+
+    async def get_discography(self, id: str) -> list[AlbumHit]:
+        cache_key = f"discography:{id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return list(cast(list[AlbumHit], cached))
+        resp = await self._get_with_retry(
+            "/release-group",
+            {"artist": id, "type": "album|ep", "limit": "100", "fmt": "json"},
+        )
+        resp.raise_for_status()
+        allowed = {"album", "ep"}
+        seen: set[str] = set()
+        albums: list[AlbumHit] = []
+        for item in resp.json().get("release-groups", []):
+            if not isinstance(item, dict):
+                continue
+            primary = str(item.get("primary-type") or "").casefold()
+            if primary not in allowed:
+                continue
+            mbid = str(item.get("id") or "")
+            if not mbid or mbid in seen:
+                continue
+            seen.add(mbid)
+            albums.append(_parse_release_group_hit(item, artist_id=id))
+        albums.sort(key=lambda a: (a.year or "0000", a.title), reverse=True)
+        self._cache.set(cache_key, albums, 24 * 60 * 60)
+        return albums
+
+    async def get_album(self, id: str) -> AlbumDetail:
+        cache_key = f"album:{id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cast(AlbumDetail, cached)
+        rg_resp = await self._get_with_retry(
+            f"/release-group/{id}", {"inc": "releases", "fmt": "json"}
+        )
+        rg_resp.raise_for_status()
+        rg = rg_resp.json()
+        releases = rg.get("releases", [])
+        release_id = None
+        if isinstance(releases, list) and releases:
+            first = releases[0]
+            if isinstance(first, dict):
+                release_id = str(first.get("id") or "") or None
+        tracks: list[AlbumTrack] = []
+        if release_id:
+            rel_resp = await self._get_with_retry(
+                f"/release/{release_id}", {"inc": "recordings", "fmt": "json"}
+            )
+            if rel_resp.status_code != 404:
+                rel_resp.raise_for_status()
+                tracks = _parse_release_tracks(rel_resp.json())
+        artwork_url = await self._artwork_url(id)
+        hit = _parse_release_group_hit(rg, artist_id=None)
+        values = hit.__dict__.copy()
+        values["artwork_url"] = artwork_url
+        values["track_count"] = len(tracks) or hit.track_count
+        detail = AlbumDetail(**values, tracks=tracks)
+        self._cache.set(cache_key, detail, 24 * 60 * 60)
+        return detail
+
+    async def _artwork_url(self, release_group_mbid: str) -> str | None:
+        url = f"https://coverartarchive.org/release-group/{release_group_mbid}/front-250"
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0), follow_redirects=False
+            ) as client:
+                resp = await client.get(url)
+        except httpx.HTTPError:
+            return None
+        if resp.status_code == 200:
+            return url
+        return None
 
     async def lookup_recording(self, mbid: str) -> TrackMeta | None:
         resp = await self._get_with_retry(
@@ -208,3 +324,80 @@ def _parse_recording(data: dict[str, object]) -> TrackMeta | None:
         track_no=track_no,
         duration_ms=duration_ms,
     )
+
+
+def _year_from_date(value: object) -> str | None:
+    text = str(value or "")
+    return text[:4] if len(text) >= 4 and text[:4].isdigit() else None
+
+
+def _parse_artist_hit(data: dict[str, object]) -> ArtistHit:
+    mbid = str(data.get("id") or "")
+    return ArtistHit(
+        provider="musicbrainz",
+        provider_id=mbid,
+        mbid=mbid or None,
+        name=str(data.get("name") or ""),
+        disambiguation=str(data.get("disambiguation") or "") or None,
+        sort_name=str(data.get("sort-name") or "") or None,
+    )
+
+
+def _parse_artist_detail(data: dict[str, object]) -> ArtistDetail:
+    hit = _parse_artist_hit(data)
+    return ArtistDetail(
+        **hit.__dict__,
+        country=str(data.get("country") or "") or None,
+        type=str(data.get("type") or "") or None,
+    )
+
+
+def _parse_release_group_hit(data: dict[str, object], artist_id: str | None) -> AlbumHit:
+    mbid = str(data.get("id") or "")
+    return AlbumHit(
+        provider="musicbrainz",
+        provider_id=mbid,
+        title=str(data.get("title") or ""),
+        artist_provider_id=artist_id,
+        year=_year_from_date(data.get("first-release-date")),
+        release_type=str(data.get("primary-type") or "") or None,
+        mbid=mbid or None,
+        artwork_url=f"https://coverartarchive.org/release-group/{mbid}/front-250"
+        if mbid
+        else None,
+        track_count=_to_int(data.get("count")),
+    )
+
+
+def _parse_release_tracks(data: dict[str, object]) -> list[AlbumTrack]:
+    tracks: list[AlbumTrack] = []
+    media_list = data.get("media", [])
+    if not isinstance(media_list, list):
+        return tracks
+    for media in media_list:
+        if not isinstance(media, dict):
+            continue
+        disc = _to_int(media.get("position")) or 1
+        raw_tracks = media.get("tracks", []) or media.get("track", [])
+        if not isinstance(raw_tracks, list):
+            continue
+        for raw in raw_tracks:
+            if not isinstance(raw, dict):
+                continue
+            rec = raw.get("recording")
+            recording_mbid = str(rec.get("id") or "") if isinstance(rec, dict) else None
+            duration_ms = _to_int(raw.get("length"))
+            tracks.append(
+                AlbumTrack(
+                    position=_to_int(raw.get("position") or raw.get("number")) or len(tracks) + 1,
+                    disc=disc,
+                    title=str(
+                        raw.get("title")
+                        or (rec.get("title") if isinstance(rec, dict) else "")
+                        or ""
+                    ),
+                    duration_sec=duration_ms // 1000 if duration_ms is not None else None,
+                    recording_mbid=recording_mbid or None,
+                )
+            )
+    return tracks

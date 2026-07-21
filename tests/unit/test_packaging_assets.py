@@ -16,7 +16,7 @@ def test_setuptools_includes_web_assets_in_built_distributions() -> None:
     assert "static/css/*.css" in package_data["app"]
 
 
-def test_custom_json_forms_are_not_double_submitted() -> None:
+def test_settings_forms_are_native_and_not_double_submitted() -> None:
     templates = Path("app/templates")
     base = (templates / "base.html").read_text()
     setup = (templates / "setup.html").read_text()
@@ -24,6 +24,8 @@ def test_custom_json_forms_are_not_double_submitted() -> None:
 
     assert 'document.addEventListener("submit"' not in base
     assert 'id="setup-form"' in setup and 'data-custom-submit="true"' in setup
-    assert 'id="settings-form"' in settings and 'data-custom-submit="true"' in settings
-    assert 'headers: {"Content-Type": "application/json"' in settings
+    assert 'id="settings-form"' not in settings
+    assert 'data-custom-submit="true"' not in settings
+    assert 'headers: {"Content-Type": "application/json"' not in settings
+    assert 'method="post" action="/settings/save"' in settings
     assert '"tidal_config_path","tidal_session_path","tidal_quality"' in setup

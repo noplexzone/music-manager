@@ -3,69 +3,79 @@
 {% block content %}
 <div class="page-header">
   <h1>Search</h1>
-  <p>Query configured music sources in real time. TIDAL supports direct TIDAL track URL downloads only via tidal-dl.</p>
+  <p>Search the metadata catalog first, then acquire selected albums or tracks through configured download sources. Use Advanced for raw listings and direct TIDAL track URL downloads.</p>
 </div>
-<form method="post" action="/search/ui" class="form-row" style="margin-bottom:1.5rem;">
-  <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
-  <input type="text" name="artist" value="{{ artist | default('') | e }}" placeholder="Artist" style="flex:1; min-width:160px;">
-  <input type="text" name="album" value="{{ album | default('') | e }}" placeholder="Album" style="flex:1; min-width:160px;">
-  <input type="text" name="track" value="{{ track | default('') | e }}" placeholder="Track" style="flex:1; min-width:160px;">
-  <input type="text" name="query" value="{{ query | e }}" placeholder="Free text…" style="flex:1; min-width:180px;">
-  <button type="submit" class="btn">Search</button>
-</form>
-{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
-{% if results is not none %}
-  {% if source_states %}
-  <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
-    {% for name, state in source_states.items() %}
-    <span class="badge {{ 'ok' if state.available else 'error' }}">
-      <span class="dot"></span>{{ name }}{% if not state.available %}: {{ state.reason or 'unavailable' }}{% endif %}
-    </span>
-    {% endfor %}
-  </div>
-  {% endif %}
+<nav class="tabs" style="display:flex; gap:0.5rem; margin-bottom:1rem;">
+  <a class="btn {{ 'secondary' if tab == 'advanced' else '' }}" href="/search">Catalog</a>
+  <a class="btn {{ '' if tab == 'advanced' else 'secondary' }}" href="/search?tab=advanced">Advanced (sources)</a>
+</nav>
 
-  {% if results %}
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Source</th>
-          <th>Title</th>
-          <th>Artist</th>
-          <th>Album</th>
-          <th>Format</th>
-          <th>Size</th>
-          <th>Duration</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for r in results %}
-        <tr>
-          <td><span class="badge info">{{ r.source }}</span></td>
-          <td>{{ r.title or "–" }}</td>
-          <td>{{ r.artist or "–" }}</td>
-          <td>{{ r.album or "–" }}</td>
-          <td>{{ r.format or "–" }}</td>
-          <td>{{ (r.size_bytes // 1048576) ~ " MB" if r.size_bytes else "–" }}</td>
-          <td>{{ ("%d:%02d" % (r.duration_sec // 60, r.duration_sec % 60)) if r.duration_sec else "–" }}</td>
-          <td>
-            <form method="post" action="/downloads/create" style="display:inline;">
-              <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
-              <input type="hidden" name="query" value="{{ (r.title or query) | e }}">
-              <input type="hidden" name="source" value="{{ r.source | e }}">
-              <input type="hidden" name="selected_result" value="{{ r.model_dump_json() | e }}">
-              <button type="submit" class="btn secondary" style="padding:0.2rem 0.6rem; font-size:0.8rem;">Enqueue</button>
-            </form>
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
+{% if tab != 'advanced' %}
+<section class="card">
+  <h2>Catalog search</h2>
+  {% if not metadata_enabled %}
+    <div class="empty-state" role="status"><h3>No metadata providers enabled</h3><p>Enable MusicBrainz, Deezer, or iTunes before catalog search can run.</p><a class="btn" href="/settings#metadata-providers">Fix in Settings</a></div>
   {% else %}
-  <div class="empty-state" role="status"><h3>No results found</h3><p>Try different fields or check provider readiness in Settings.</p><a class="btn secondary" href="/settings">Check settings</a></div>
+  <form method="get" action="/search" class="form-row" style="margin-bottom:1rem;">
+    <input type="text" name="q" value="{{ catalog_query | e }}" placeholder="Search artist catalog…" style="flex:1; min-width:240px;" required>
+    <select name="provider">
+      <option value="all" {% if catalog_provider == 'all' %}selected{% endif %}>All enabled providers</option>
+      {% for item in metadata_providers %}{% if item.enabled %}
+      <option value="{{ item.name }}" {% if catalog_provider == item.name %}selected{% endif %}>{{ item.name }}</option>
+      {% endif %}{% endfor %}
+    </select>
+    <button type="submit" class="btn">Search catalog</button>
+  </form>
   {% endif %}
+  {% if catalog_outcomes %}
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
+      {% for outcome in catalog_outcomes %}
+      <span class="badge {{ 'ok' if outcome.state.available else 'error' }}"><span class="dot"></span>{{ outcome.provider }}{% if not outcome.state.available %}: {{ outcome.state.reason or 'unavailable' }}{% endif %}</span>
+      {% endfor %}
+    </div>
+    {% set any_hits = namespace(value=false) %}
+    <div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1rem;">
+    {% for outcome in catalog_outcomes %}
+      {% for artist_hit in outcome.artists %}
+      {% set any_hits.value = true %}
+      <article class="card">
+        {% if artist_hit.artwork_url %}<img src="{{ artist_hit.artwork_url | e }}" alt="" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:0.5rem;">{% endif %}
+        <h3>{{ artist_hit.name }}</h3>
+        <p><span class="badge info">{{ artist_hit.provider }}</span>{% if artist_hit.disambiguation %} {{ artist_hit.disambiguation }}{% endif %}</p>
+        <a class="btn secondary" href="/artists/catalog/open?provider={{ artist_hit.provider | urlencode }}&provider_id={{ artist_hit.provider_id | urlencode }}">Open discography</a>
+      </article>
+      {% endfor %}
+    {% endfor %}
+    </div>
+    {% if not any_hits.value %}<div class="empty-state"><h3>No catalog results</h3><p>Try another artist or provider.</p></div>{% endif %}
+  {% endif %}
+</section>
+{% else %}
+<section class="card">
+  <h2>Advanced source search</h2><p class="hint">Use this for raw source listings and direct TIDAL track URL downloads.</p>
+  <form method="post" action="/search/ui" class="form-row" style="margin-bottom:1.5rem;">
+    <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
+    <input type="text" name="artist" value="{{ artist | default('') | e }}" placeholder="Artist" style="flex:1; min-width:160px;">
+    <input type="text" name="album" value="{{ album | default('') | e }}" placeholder="Album" style="flex:1; min-width:160px;">
+    <input type="text" name="track" value="{{ track | default('') | e }}" placeholder="Track" style="flex:1; min-width:160px;">
+    <input type="text" name="query" value="{{ query | e }}" placeholder="Free text…" style="flex:1; min-width:180px;">
+    <button type="submit" class="btn">Search sources</button>
+  </form>
+  {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+  {% if results is not none %}
+    {% if source_states %}
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
+      {% for name, state in source_states.items() %}
+      <span class="badge {{ 'ok' if state.available else 'error' }}"><span class="dot"></span>{{ name }}{% if not state.available %}: {{ state.reason or 'unavailable' }} <a href="/settings#provider-{{ name }}">Fix in Settings</a>{% endif %}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if results %}
+    <div class="table-wrap"><table><thead><tr><th>Source</th><th>Title</th><th>Artist</th><th>Album</th><th>Format</th><th>Size</th><th>Duration</th><th>Action</th></tr></thead><tbody>
+    {% for r in results %}<tr><td><span class="badge info">{{ r.source }}</span></td><td>{{ r.title or "–" }}</td><td>{{ r.artist or "–" }}</td><td>{{ r.album or "–" }}</td><td>{{ r.format or "–" }}</td><td>{{ (r.size_bytes // 1048576) ~ " MB" if r.size_bytes else "–" }}</td><td>{{ ("%d:%02d" % (r.duration_sec // 60, r.duration_sec % 60)) if r.duration_sec else "–" }}</td><td><form method="post" action="/downloads/create" style="display:inline;"><input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}"><input type="hidden" name="query" value="{{ (r.title or query) | e }}"><input type="hidden" name="source" value="{{ r.source | e }}"><input type="hidden" name="selected_result" value="{{ r.model_dump_json() | e }}"><button type="submit" class="btn secondary" style="padding:0.2rem 0.6rem; font-size:0.8rem;">Enqueue</button></form></td></tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<div class="empty-state" role="status"><h3>No results found</h3><p>Try different fields or check provider readiness in Settings.</p><a class="btn secondary" href="/settings">Check settings</a></div>{% endif %}
+  {% endif %}
+</section>
 {% endif %}
 {% endblock %}
