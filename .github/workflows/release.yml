@@ -49,6 +49,7 @@ jobs:
           images: noplexzone/music-manager
           tags: |
             type=semver,pattern={{version}}
+            type=raw,value=develop
 
       - uses: docker/setup-buildx-action@v3
 
