@@ -3,19 +3,19 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: noplexzone/music-manager:0.2.0
-    container_name: music-manager
+    image: noplexzone/audiohoard:0.5.0
+    container_name: audiohoard
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8000}:8000"
     env_file:
       - .env
     environment:
-      DATABASE_URL: "sqlite+aiosqlite:////app/data/music_manager.db"
+      DATABASE_URL: "sqlite+aiosqlite:////app/data/audiohoard.db"
     volumes:
       - ./data:/app/data
       - ${LIBRARY_ROOT:-/music}:/music
-      - ${STAGING_ROOT:-/staging/music-manager}:/staging/music-manager
+      - ${STAGING_ROOT:-/staging/audiohoard}:/staging/audiohoard
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

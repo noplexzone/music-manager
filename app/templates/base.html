@@ -4,8 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>{% block title %}Music Manager{% endblock %}</title>
+  <title>{% block title %}Audiohoard{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="icon" type="image/x-icon" href="/static/branding/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/branding/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/branding/favicon-16.png">
+  <link rel="apple-touch-icon" href="/static/branding/apple-touch-icon.png">
+  <link rel="manifest" href="/static/branding/site.webmanifest">
 </head>
 <body>
 <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -23,7 +28,7 @@
 <div class="app-shell{% if auth_view %} auth-shell{% endif %}">
   {% if not auth_view %}
   <aside class="sidebar">
-    <a class="brand" href="/" aria-label="Music Manager home"><span class="brand-mark">MM</span><span>Music Manager</span></a>
+    <a class="brand" href="/" aria-label="Audiohoard home"><span class="brand-mark"><img src="/static/branding/icon-32.png" alt="" width="32" height="32"></span><span>Audiohoard</span></a>
     <nav class="primary-nav" aria-label="Primary navigation">
       {% set path = request.url.path %}
       <a href="/" {% if path == "/" %}class="active" aria-current="page"{% endif %}><svg><use href="#i-home"/></svg><span>Dashboard</span></a>
@@ -37,10 +42,10 @@
       <a href="/settings" {% if path.startswith("/settings") or path.startswith("/changelog") %}class="active" aria-current="page"{% endif %}><svg><use href="#i-settings"/></svg><span>Settings</span></a>
       <a href="/api/docs"><span class="nav-symbol" aria-hidden="true">{ }</span><span>API docs</span></a>
     </nav>
-    <p class="sidebar-meta"><a href="/changelog">v0.4.0</a> · private &amp; local</p>
+    <p class="sidebar-meta"><a href="/changelog">v0.5.0</a> · private &amp; local</p>
   </aside>
   <header class="mobile-header">
-    <a class="brand" href="/" aria-label="Music Manager home"><span class="brand-mark">MM</span><span>Music Manager</span></a>
+    <a class="brand" href="/" aria-label="Audiohoard home"><span class="brand-mark"><img src="/static/branding/icon-32.png" alt="" width="32" height="32"></span><span>Audiohoard</span></a>
   </header>
   {% endif %}
   <main id="main-content" tabindex="-1">

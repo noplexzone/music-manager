@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -33,13 +34,17 @@ def _get_templates(request: Request) -> Jinja2Templates:
     return request.app.state.templates  # type: ignore[no-any-return]
 
 
-def _build_adapter(name: str, settings: Settings) -> SourceAdapter | None:
+def _build_adapter(
+    name: str, settings: Settings, budget_seconds: int | None = None
+) -> SourceAdapter | None:
     if name == "slskd":
-        return SlskdAdapter(settings.slskd_url, settings.slskd_api_key)
+        return SlskdAdapter(
+            settings.slskd_url, settings.slskd_api_key, float(budget_seconds or 60)
+        )
     if name == "prowlarr":
         return ProwlarrAdapter(settings.prowlarr_url, settings.prowlarr_api_key)
     if name == "youtube":
-        return YouTubeAdapter(settings.ytdlp_cookies_file)
+        return YouTubeAdapter(settings.ytdlp_cookies_file, float(budget_seconds or 30))
     if name == "tidal":
         return TidalAdapter(
             settings.tidal_config_path,
@@ -50,9 +55,10 @@ def _build_adapter(name: str, settings: Settings) -> SourceAdapter | None:
 
 
 async def _search_source(
-    name: str, settings: Settings, query: SearchRequest
+    name: str, settings: Settings, query: SearchRequest, budget_seconds: int | None = None
 ) -> tuple[str, list[SearchResult], SourceStatus]:
-    adapter = _build_adapter(name, settings)
+    started = time.perf_counter()
+    adapter = _build_adapter(name, settings, budget_seconds)
     if adapter is None:
         return (
             name,
@@ -68,7 +74,8 @@ async def _search_source(
 
     try:
         results = await adapter.search(query)
-        return name, results, SourceStatus(available=True)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return name, results, SourceStatus(available=True, details={"elapsed_ms": elapsed_ms})
     except ProviderError as exc:
         logger.warning("Search on %s failed with code %s", name, exc.code)
         return name, [], SourceStatus(available=False, reason=exc.message, details=exc.details())
@@ -96,7 +103,10 @@ async def search(
         requested = [s for s in runtime.enabled_sources if s in _VALID_SOURCES]
     else:
         requested = [s for s in req.sources if s in _VALID_SOURCES]
-    tasks = [_search_source(name, settings, req) for name in requested]
+    tasks = [
+        _search_source(name, settings, req, runtime.source_search_budget_seconds)
+        for name in requested
+    ]
     outcomes = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_results: list[SearchResult] = []
@@ -216,7 +226,10 @@ async def search_ui(
         sources=sources,
     )
     ordered_sources = sources or [s for s in runtime.enabled_sources if s in _VALID_SOURCES]
-    tasks = [_search_source(name, settings, req) for name in ordered_sources]
+    tasks = [
+        _search_source(name, settings, req, runtime.source_search_budget_seconds)
+        for name in ordered_sources
+    ]
     outcomes = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_results: list[SearchResult] = []

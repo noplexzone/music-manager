@@ -51,7 +51,8 @@ def escape_lucene(value: str) -> str:
 
 _MB_BASE = "https://musicbrainz.org/ws/2"
 _RATE_SEMAPHORE = asyncio.Semaphore(1)
-_RATE_DELAY = 1.1
+_RATE_DELAY = 1.0
+_LAST_REQUEST_AT = 0.0
 
 
 @dataclass
@@ -87,10 +88,15 @@ class MusicBrainzClient:
         )
 
     async def _get(self, path: str, params: dict[str, str]) -> httpx.Response:
+        global _LAST_REQUEST_AT
         async with _RATE_SEMAPHORE:
+            now = asyncio.get_running_loop().time()
+            delay = max(0.0, _RATE_DELAY - (now - _LAST_REQUEST_AT))
+            if delay:
+                await asyncio.sleep(delay)
             async with self._client() as client:
                 resp = await client.get(path, params=params)
-            await asyncio.sleep(_RATE_DELAY)
+            _LAST_REQUEST_AT = asyncio.get_running_loop().time()
         if resp.status_code == 503:
             resp.raise_for_status()
         return resp

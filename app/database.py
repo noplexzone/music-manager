@@ -21,8 +21,8 @@ class Base(DeclarativeBase):
     pass
 
 
-_AFTER_COMMIT_KEY = "music_manager_after_commit"
-_AFTER_ROLLBACK_KEY = "music_manager_after_rollback"
+_AFTER_COMMIT_KEY = "audiohoard_after_commit"
+_AFTER_ROLLBACK_KEY = "audiohoard_after_rollback"
 
 
 def register_transaction_callbacks(

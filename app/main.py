@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from importlib.resources import files
 from pathlib import Path
@@ -19,11 +20,13 @@ from starlette.responses import Response
 from app.auth import get_current_user, setup_complete
 from app.config import Settings, get_settings
 from app.database import get_db
+from app.display_names import display_name
 from app.routers import auth, health, imports, jobs, naming, search, tracks
 from app.routers import catalog as catalog_router
 from app.routers import settings as settings_router
 from app.services.artist_monitoring import DiscographyRefreshScheduler
 from app.services.dashboard import get_dashboard_data
+from app.services.health_status import get_health_status_service
 from app.settings_service import effective_settings_dep
 
 _TEMPLATES_DIR = files("app") / "templates"
@@ -35,11 +38,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler = DiscographyRefreshScheduler()
+    health_status = get_health_status_service()
     app.state.discography_scheduler = scheduler
+    app.state.health_status_service = health_status
     await scheduler.start()
+    await health_status.start()
     try:
         yield
     finally:
+        await health_status.stop()
         await scheduler.stop()
 
 
@@ -52,8 +59,8 @@ def create_app() -> FastAPI:
     )
 
     app = FastAPI(
-        title="Music Manager",
-        version="0.4.0",
+        title="Audiohoard",
+        version="0.5.0",
         description="Self-hosted music acquisition and library management",
         docs_url="/api/docs",
         redoc_url="/api/redoc",
@@ -62,7 +69,27 @@ def create_app() -> FastAPI:
 
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     app.state.templates.env.filters["from_json"] = lambda value: json.loads(value or "[]")
+    app.state.templates.env.filters["display_name"] = display_name
+    app.state.templates.env.globals["display_name"] = display_name
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+    @app.middleware("http")
+    async def html_timing_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        started = time.perf_counter()
+        response = await call_next(request)
+        content_type = response.headers.get("content-type", "")
+        if "text/html" in content_type:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            logger.info(
+                "%s %s %s %sms",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration_ms,
+            )
+        return response
 
     app.include_router(health.router, tags=["health"])
     app.include_router(auth.router, tags=["auth"])
