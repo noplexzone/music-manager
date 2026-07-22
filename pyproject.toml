@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "music-manager"
-version = "0.3.0"
+version = "0.4.0"
 description = "Self-hosted music acquisition, metadata enrichment, and library naming"
 requires-python = ">=3.12"
 dependencies = [
@@ -46,6 +46,9 @@ include = ["app*"]
 
 [tool.setuptools.package-data]
 app = ["templates/*.html", "static/css/*.css"]
+
+[tool.setuptools.data-files]
+"." = ["CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

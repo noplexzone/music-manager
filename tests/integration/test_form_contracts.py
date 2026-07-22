@@ -96,7 +96,9 @@ async def _native_submit(client: AsyncClient, page_url: str, form: ParsedForm) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/search", "/downloads", "/settings", "/imports/ui/review"])
+@pytest.mark.parametrize(
+    "path", ["/search", "/downloads", "/settings/download-sources", "/imports/ui/review"]
+)
 async def test_authenticated_page_forms_replay_as_native_browser_posts(
     client: AsyncClient, path: str
 ) -> None:

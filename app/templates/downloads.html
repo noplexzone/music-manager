@@ -13,6 +13,7 @@
   <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
   <input type="text" name="query" placeholder="Track or album&hellip;" style="flex:1; min-width:220px;" required>
   <select name="source">
+    <option value="priority">Priority with fallback</option>
     <option value="slskd">slskd</option>
     <option value="prowlarr">Prowlarr</option>
     <option value="youtube">YouTube</option>
@@ -27,7 +28,7 @@
     <thead>
       <tr>
         <th>#</th>
-        <th>Source</th>
+        <th>Attempted → served</th>
         <th>Query</th>
         <th>Status</th>
         <th>Created</th>
@@ -40,7 +41,7 @@
       {% set sc = "ok" if download.status.value == "done" else ("warn" if download.status.value == "running" else ("error" if download.status.value == "failed" else "info")) %}
       <tr>
         <td><code>{{ download.id }}</code></td>
-        <td><span class="badge info">{{ download.source }}</span></td>
+        <td>{% set meta = download.result_json | from_json if download.result_json else {} %}{% if meta.attempted_sources %}<span class="hint">{{ meta.attempted_sources | join(" → ") }}</span> → <span class="badge info">{{ meta.served_source or download.source }}</span>{% else %}<span class="badge info">{{ download.source }}</span>{% endif %}</td>
         <td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ download.query }}</td>
         <td><span class="badge {{ sc }}"><span class="dot"></span>{{ download.status.value }}</span></td>
         <td style="color:var(--text-muted); font-size:0.8rem;">{{ download.created_at.strftime("%Y-%m-%d %H:%M") }}</td>

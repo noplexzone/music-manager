@@ -36,6 +36,9 @@ DEFAULT_METADATA_PROVIDERS: list[dict[str, object]] = [
 ]
 VALID_METADATA_PROVIDERS = {str(item["name"]) for item in DEFAULT_METADATA_PROVIDERS}
 DEFAULT_FREE_TEXT_RESULT_LIMIT = 10
+DEFAULT_PRIMARY_METADATA_PROVIDER = "musicbrainz"
+DEFAULT_DISCOGRAPHY_REFRESH_HOURS = 24
+DEFAULT_AUTO_DOWNLOAD_WANTED = False
 _cache: dict[str, str] | None = None
 
 
@@ -44,6 +47,9 @@ class RuntimeSettings:
     source_priority: list[dict[str, object]]
     free_text_result_limit: int
     metadata_providers: list[dict[str, object]]
+    primary_metadata_provider: str
+    discography_refresh_hours: int
+    auto_download_wanted: bool
 
     @property
     def enabled_sources(self) -> list[str]:
@@ -109,10 +115,32 @@ async def get_runtime_settings(db: AsyncSession) -> RuntimeSettings:
         limit = int(values.get("free_text_result_limit", str(DEFAULT_FREE_TEXT_RESULT_LIMIT)))
     except ValueError:
         limit = DEFAULT_FREE_TEXT_RESULT_LIMIT
+    metadata_providers = _normalize_metadata_providers(metadata_raw)
+    enabled_metadata = [
+        str(item["name"]) for item in metadata_providers if item.get("enabled") is True
+    ]
+    primary = values.get("primary_metadata_provider", DEFAULT_PRIMARY_METADATA_PROVIDER)
+    if primary not in enabled_metadata:
+        primary = enabled_metadata[0] if enabled_metadata else DEFAULT_PRIMARY_METADATA_PROVIDER
+    try:
+        refresh_hours = int(
+            values.get("discography_refresh_hours", str(DEFAULT_DISCOGRAPHY_REFRESH_HOURS))
+        )
+    except ValueError:
+        refresh_hours = DEFAULT_DISCOGRAPHY_REFRESH_HOURS
+    auto_download = values.get("auto_download_wanted", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     return RuntimeSettings(
         _normalize_priority(priority_raw),
         max(1, min(limit, 100)),
-        _normalize_metadata_providers(metadata_raw),
+        metadata_providers,
+        primary,
+        max(1, min(refresh_hours, 24 * 30)),
+        auto_download,
     )
 
 
@@ -121,16 +149,33 @@ async def save_runtime_settings(
     source_priority: list[dict[str, object]],
     free_text_result_limit: int,
     metadata_providers: list[dict[str, object]] | None = None,
+    primary_metadata_provider: str | None = None,
+    discography_refresh_hours: int | None = None,
+    auto_download_wanted: bool | None = None,
 ) -> None:
     global _cache
     normalized = _normalize_priority(source_priority)
     metadata_normalized = _normalize_metadata_providers(
         metadata_providers if metadata_providers is not None else []
     )
+    enabled_metadata = [
+        str(item["name"]) for item in metadata_normalized if item.get("enabled") is True
+    ]
+    primary = primary_metadata_provider or DEFAULT_PRIMARY_METADATA_PROVIDER
+    if primary not in enabled_metadata:
+        raise ValueError("Primary metadata provider must be enabled")
+    refresh_hours = (
+        discography_refresh_hours
+        if discography_refresh_hours is not None
+        else DEFAULT_DISCOGRAPHY_REFRESH_HOURS
+    )
     payloads = {
         "source_priority": json.dumps(normalized),
         "free_text_result_limit": str(max(1, min(free_text_result_limit, 100))),
         "metadata_providers": json.dumps(metadata_normalized),
+        "primary_metadata_provider": primary,
+        "discography_refresh_hours": str(max(1, min(refresh_hours, 24 * 30))),
+        "auto_download_wanted": "true" if bool(auto_download_wanted) else "false",
     }
     for key, value in payloads.items():
         setting = await db.get(AppSetting, key)

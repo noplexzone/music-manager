@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -22,6 +22,19 @@ class CatalogArtist(Base):
     deezer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     itunes_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     artwork_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    monitored: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    monitor_policy: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="all", server_default="all"
+    )
+    last_enriched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -49,6 +62,14 @@ class CatalogAlbum(Base):
     itunes_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     artwork_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     track_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    providers_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    monitored: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    in_library: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

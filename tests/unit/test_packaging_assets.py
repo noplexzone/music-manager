@@ -14,6 +14,9 @@ def test_setuptools_includes_web_assets_in_built_distributions() -> None:
     assert "app" in package_data
     assert "templates/*.html" in package_data["app"]
     assert "static/css/*.css" in package_data["app"]
+    data_files = setuptools_config["data-files"]
+    assert "." in data_files
+    assert "CHANGELOG.md" in data_files["."]
 
 
 def test_settings_forms_are_native_and_not_double_submitted() -> None:

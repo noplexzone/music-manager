@@ -236,3 +236,54 @@ async def test_validate_only_does_not_write(db_session: object) -> None:
         select(ProviderSetting).where(ProviderSetting.key == "slskd_url")
     )
     assert row is None
+
+
+@pytest.mark.asyncio
+async def test_primary_metadata_provider_must_be_enabled(db_session: object) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.settings_service import save_runtime_settings
+
+    assert isinstance(db_session, AsyncSession)
+    with pytest.raises(ValueError, match="Primary metadata provider must be enabled"):
+        await save_runtime_settings(
+            db_session,
+            [{"name": "slskd", "enabled": True}],
+            10,
+            metadata_providers=[
+                {"name": "musicbrainz", "enabled": True},
+                {"name": "deezer", "enabled": False},
+            ],
+            primary_metadata_provider="deezer",
+        )
+
+
+@pytest.mark.asyncio
+async def test_runtime_settings_persist_monitoring_defaults_and_primary_provider(
+    db_session: object,
+) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.settings_service import get_runtime_settings, save_runtime_settings
+
+    assert isinstance(db_session, AsyncSession)
+    await save_runtime_settings(
+        db_session,
+        [{"name": "youtube", "enabled": True}, {"name": "slskd", "enabled": False}],
+        7,
+        metadata_providers=[
+            {"name": "deezer", "enabled": True},
+            {"name": "musicbrainz", "enabled": True},
+        ],
+        primary_metadata_provider="deezer",
+        discography_refresh_hours=12,
+        auto_download_wanted=True,
+    )
+
+    runtime = await get_runtime_settings(db_session)
+
+    assert runtime.enabled_sources[0] == "youtube"
+    assert runtime.free_text_result_limit == 7
+    assert runtime.primary_metadata_provider == "deezer"
+    assert runtime.discography_refresh_hours == 12
+    assert runtime.auto_download_wanted is True

@@ -25,6 +25,7 @@ from app.services.catalog import (
     list_library_tracks,
 )
 from app.services.catalog_metadata import (
+    enrich_catalog_artist,
     fetch_and_store_album,
     fetch_and_store_discography,
     open_catalog_artist,
@@ -32,6 +33,23 @@ from app.services.catalog_metadata import (
 from app.settings_service import effective_settings_dep, get_runtime_settings
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+
+
+async def _enrich_artist_task(artist_id: int, providers: list[str]) -> None:
+    from app.config import get_settings
+    from app.database import get_session_factory
+    from app.settings_service import build_effective_settings
+
+    factory = get_session_factory()
+    async with factory() as session:
+        cfg = await build_effective_settings(session, get_settings())
+        artist = await session.get(CatalogArtist, artist_id)
+        if artist is not None:
+            try:
+                await enrich_catalog_artist(session, cfg, artist, providers)
+                await session.commit()
+            except Exception:
+                await session.rollback()
 
 
 def _templates(request: Request) -> Jinja2Templates:
@@ -155,11 +173,14 @@ async def artist_detail_page(
 async def open_catalog_artist_page(
     provider: str,
     provider_id: str,
+    background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(effective_settings_dep)],
 ) -> RedirectResponse:
     artist = await open_catalog_artist(db, settings, provider, provider_id)
+    runtime = await get_runtime_settings(db)
     await db.commit()
+    background_tasks.add_task(_enrich_artist_task, artist.id, runtime.enabled_metadata_providers)
     return RedirectResponse(f"/artists/catalog/{artist.id}", status_code=303)
 
 
@@ -207,6 +228,80 @@ async def catalog_artist_page(
     )
 
 
+@router.post("/artists/catalog/{artist_id}/enrich", include_in_schema=False)
+async def enrich_catalog_artist_page(
+    artist_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
+    _user: Annotated[object, Depends(require_mutation)],
+) -> RedirectResponse:
+    artist = await db.get(CatalogArtist, artist_id)
+    if artist is None:
+        raise HTTPException(status_code=404, detail="Catalog artist not found")
+    runtime = await get_runtime_settings(db)
+    outcome = await enrich_catalog_artist(db, settings, artist, runtime.enabled_metadata_providers)
+    await db.commit()
+    suffix = "?enrichment=ambiguous" if outcome.get("status") == "ambiguous" else "?enrichment=ok"
+    return RedirectResponse(f"/artists/catalog/{artist.id}{suffix}", status_code=303)
+
+
+@router.post("/artists/catalog/{artist_id}/monitor", include_in_schema=False)
+async def monitor_catalog_artist_page(
+    artist_id: int,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _user: Annotated[object, Depends(require_mutation)],
+) -> RedirectResponse:
+    artist = await db.get(CatalogArtist, artist_id)
+    if artist is None:
+        raise HTTPException(status_code=404, detail="Catalog artist not found")
+    form = await request.form()
+    artist.monitored = str(form.get("monitored", "")).lower() in {"1", "true", "on", "yes"}
+    policy = str(form.get("monitor_policy", artist.monitor_policy or "all"))
+    artist.monitor_policy = policy if policy in {"all", "albums_only", "none_new"} else "all"
+    album_ids = {int(str(v)) for v in form.getlist("album_monitored") if str(v).isdigit()}
+    bulk = str(form.get("bulk", ""))
+    for album in artist.albums:
+        if bulk == "all":
+            album.monitored = True
+        elif bulk == "none":
+            album.monitored = False
+        elif bulk == "albums_only":
+            album.monitored = (album.release_type or "album").casefold() == "album"
+        elif bulk == "singles_off":
+            album.monitored = (album.release_type or "").casefold() not in {"single", "ep"}
+        else:
+            album.monitored = album.id in album_ids
+    await db.commit()
+    return RedirectResponse(f"/artists/catalog/{artist.id}", status_code=303)
+
+
+@router.get("/artists/monitored", response_class=HTMLResponse, include_in_schema=False)
+async def monitored_artists_page(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+) -> HTMLResponse:
+    result = await db.execute(
+        select(CatalogArtist)
+        .where(CatalogArtist.monitored.is_(True))
+        .options(selectinload(CatalogArtist.albums))
+    )
+    artists = list(result.scalars().all())
+    return _templates(request).TemplateResponse(request, "monitored.html", {"artists": artists})
+
+
+@router.get("/wanted", response_class=HTMLResponse, include_in_schema=False)
+async def wanted_page(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+) -> HTMLResponse:
+    result = await db.execute(
+        select(CatalogAlbum)
+        .where(CatalogAlbum.monitored.is_(True), CatalogAlbum.in_library.is_(False))
+        .options(selectinload(CatalogAlbum.artist))
+    )
+    albums = list(result.scalars().all())
+    return _templates(request).TemplateResponse(request, "wanted.html", {"albums": albums})
+
+
 @router.get("/albums/{album_id}", response_class=HTMLResponse)
 async def catalog_album_page(
     request: Request,
@@ -251,10 +346,8 @@ async def download_catalog_album(
     album = result.scalar_one_or_none()
     if album is None:
         raise HTTPException(status_code=404, detail="Catalog album not found")
-    runtime = await get_runtime_settings(db)
-    source = runtime.enabled_sources[0] if runtime.enabled_sources else "slskd"
     query = f"{album.artist.name} {album.title}".strip()
-    job = Job(source=source, query=query, status=JobStatus.pending, catalog_album_id=album.id)
+    job = Job(source="priority", query=query, status=JobStatus.pending, catalog_album_id=album.id)
     db.add(job)
     await db.commit()
     await db.refresh(job)
@@ -281,11 +374,9 @@ async def download_catalog_track(
     track = next((t for t in album.tracks if t.id == track_id), None)
     if track is None:
         raise HTTPException(status_code=404, detail="Catalog track not found")
-    runtime = await get_runtime_settings(db)
-    source = runtime.enabled_sources[0] if runtime.enabled_sources else "slskd"
     query = f"{album.artist.name} {track.title}".strip()
     job = Job(
-        source=source,
+        source="priority",
         query=query,
         status=JobStatus.pending,
         catalog_album_id=album.id,

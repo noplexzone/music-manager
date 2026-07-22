@@ -12,6 +12,7 @@ from app.auth import require_admin, require_admin_read, require_mutation
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.auth import AppUser
+from app.naming.convention import render_path
 from app.schemas.health import SourceStatus
 from app.schemas.settings import SettingField, SettingsSaveRequest, SettingsTestRequest
 from app.settings_service import (
@@ -60,23 +61,93 @@ async def _probe_provider(
     return SourceStatus(available=cap.available, reason=cap.reason, details=cap.extra)
 
 
+SETTINGS_SECTIONS = {
+    "download-sources": "Download sources",
+    "download-clients": "Download clients",
+    "metadata": "Metadata",
+    "library": "Library",
+    "behavior": "Behavior",
+    "about": "About",
+}
+PROVIDER_DESCRIPTIONS = {
+    "musicbrainz": "MusicBrainz — canonical IDs, required",
+    "deezer": "Deezer — artwork and streaming catalog IDs",
+    "itunes": "iTunes — store catalog IDs and artwork fallback",
+}
+
+
+async def _client_statuses(db: AsyncSession, env: Settings) -> dict[str, SourceStatus]:
+    raw_db = await load_raw_db_values(db, env.secret_key)
+
+    def _r(key: str) -> str:
+        return resolve_for_probe(key, "", env, raw_db)
+
+    statuses: dict[str, SourceStatus] = {}
+    for provider in ["slskd", "prowlarr", "sabnzbd"]:
+        if not (_r(f"{provider}_url") and _r(f"{provider}_api_key")):
+            statuses[provider] = SourceStatus(available=False, reason="Not configured", details={})
+        else:
+            statuses[provider] = await _probe_provider(
+                provider, _r(f"{provider}_url"), _r(f"{provider}_api_key"), ""
+            )
+    statuses["youtube"] = await _probe_provider("youtube", "", "", _r("ytdlp_cookies_file"))
+    cap = await TidalAdapter(
+        _r("tidal_config_path"), _r("tidal_session_path"), _r("tidal_quality")
+    ).health()
+    statuses["tidal"] = SourceStatus(available=cap.available, reason=cap.reason, details=cap.extra)
+    return statuses
+
+
+def _naming_preview(template: str) -> str:
+    try:
+        return str(
+            render_path(
+                {
+                    "album_artist": "Queen",
+                    "artist": "Queen",
+                    "album": "A Night at the Opera",
+                    "year": "1975",
+                    "disc": 1,
+                    "disc_total": 1,
+                    "track_no": 11,
+                    "title": "Bohemian Rhapsody",
+                    "ext": "flac",
+                    "naming_template": template,
+                },
+                template=template,
+            )
+        )
+    except Exception as exc:
+        return f"Template error: {exc}"
+
+
 @router.get("/settings", response_class=HTMLResponse, include_in_schema=False)
 async def settings_page(
+    request: Request,
+    _admin: Annotated[AppUser, Depends(require_admin_read)],
+) -> RedirectResponse:
+    return RedirectResponse("/settings/download-sources", status_code=307)
+
+
+@router.get("/settings/{section}", response_class=HTMLResponse, include_in_schema=False)
+async def settings_section_page(
+    section: str,
     request: Request,
     _admin: Annotated[AppUser, Depends(require_admin_read)],
     db: Annotated[AsyncSession, Depends(get_db)],
     env: Annotated[Settings, Depends(get_settings)],
 ) -> HTMLResponse:
+    if section not in SETTINGS_SECTIONS:
+        raise HTTPException(status_code=404, detail="Unknown settings section")
     effective = await get_all_effective(db, env)
     fields = {
         k: SettingField(
-            value=v.value,
-            configured=v.configured,
-            locked_by_environment=v.locked_by_environment,
+            value=v.value, configured=v.configured, locked_by_environment=v.locked_by_environment
         )
         for k, v in effective.items()
     }
     runtime = await get_runtime_settings(db)
+    client_statuses = await _client_statuses(db, env)
     return _get_templates(request).TemplateResponse(
         request,
         "settings.html",
@@ -86,6 +157,13 @@ async def settings_page(
             "default_sources": DEFAULT_SOURCE_PRIORITY,
             "default_metadata_providers": DEFAULT_METADATA_PROVIDERS,
             "saved": request.query_params.get("saved", ""),
+            "test_result": request.query_params.get("test", ""),
+            "section": section,
+            "sections": SETTINGS_SECTIONS,
+            "client_statuses": client_statuses,
+            "provider_descriptions": PROVIDER_DESCRIPTIONS,
+            "naming_preview": _naming_preview(fields["naming_template"].value),
+            "app_version": request.app.version,
         },
     )
 
@@ -109,13 +187,24 @@ async def save_runtime_settings_page(
         else runtime.metadata_providers
     )
     limit = int(str(form.get("free_text_result_limit", runtime.free_text_result_limit)) or "10")
+    primary = str(form.get("primary_metadata_provider", runtime.primary_metadata_provider))
+    refresh_hours = int(
+        str(form.get("discography_refresh_hours", runtime.discography_refresh_hours)) or "24"
+    )
+    auto_download = str(form.get("auto_download_wanted", "")).lower() in {"1", "true", "yes", "on"}
     await save_runtime_settings(
-        db, source_priority or runtime.source_priority, limit, metadata_providers
+        db,
+        source_priority or runtime.source_priority,
+        limit,
+        metadata_providers,
+        primary,
+        refresh_hours,
+        auto_download,
     )
     await db.commit()
     section = str(form.get("section", ""))
-    suffix = f"?saved={section}#{section}" if section else "?saved=1"
-    return RedirectResponse(f"/settings{suffix}", status_code=303)
+    target = section if section in SETTINGS_SECTIONS else "download-sources"
+    return RedirectResponse(f"/settings/{target}?saved=1", status_code=303)
 
 
 @router.post("/settings/save", include_in_schema=False)
@@ -126,12 +215,13 @@ async def save_settings_page(
     _user: Annotated[object, Depends(require_mutation)],
 ) -> RedirectResponse:
     form = await request.form()
-    section = str(form.get("section", "settings"))
+    section = str(form.get("section", "download-clients"))
     allowed = set(SettingsSaveRequest.model_fields)
     updates = {str(key): str(value) for key, value in form.items() if str(key) in allowed}
     await save_settings(db, updates, env)
     await db.commit()
-    return RedirectResponse(f"/settings?saved={section}#{section}", status_code=303)
+    target = section if section in SETTINGS_SECTIONS else "download-clients"
+    return RedirectResponse(f"/settings/{target}?saved=1", status_code=303)
 
 
 @router.post("/settings/test", include_in_schema=False)
@@ -146,7 +236,7 @@ async def test_provider_page(
     raw_db = await load_raw_db_values(db, env.secret_key)
 
     def _r(key: str) -> str:
-        return resolve_for_probe(key, str(form.get(key, "")), env, raw_db)
+        return resolve_for_probe(key, "", env, raw_db)
 
     if provider == "tidal":
         cap = await TidalAdapter(
@@ -166,7 +256,7 @@ async def test_provider_page(
         status = SourceStatus(available=False, reason="Unknown provider", details={})
     result = "ok" if status.available else (status.reason or "failed")
     return RedirectResponse(
-        f"/settings?test={provider}:{result}#provider-{provider}", status_code=303
+        f"/settings/download-clients?test={provider}:{result}", status_code=303
     )
 
 
