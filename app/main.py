@@ -135,7 +135,7 @@ def create_app() -> FastAPI:
                         in_list = True
                     item = html.escape(line[2:])
                     item = re.sub(
-                        r"\\[([^\\]]+)\\]\\((https?://[^)]+)\\)", r'<a href="\\2">\\1</a>', item
+                        r"\[([^\]]+)\]\((https?://[^)]+)\)", r'<a href="\2">\1</a>', item
                     )
                     out.append(f"<li>{item}</li>")
                 else:

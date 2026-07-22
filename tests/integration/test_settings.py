@@ -411,3 +411,15 @@ async def test_tidal_quality_rejects_values_not_available_in_ui(client: AsyncCli
         json={"tidal_quality": "HI_RES"},
     )
     assert response.status_code == 422
+
+
+async def test_changelog_page_renders_markdown_links(client: object) -> None:
+    from httpx import AsyncClient
+
+    assert isinstance(client, AsyncClient)
+    response = await client.get("/changelog")
+
+    assert response.status_code == 200
+    assert "0.4.1" in response.text
+    assert "Keep a Changelog" in response.text
+    assert "https://keepachangelog.com" in response.text

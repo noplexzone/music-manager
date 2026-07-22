@@ -2,6 +2,13 @@
 
 All notable changes to Music Manager are documented here.
 
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [0.4.1] - 2026-07-22
+
+### Fixed
+- Fixed changelog page rendering for markdown links.
+
 ## [0.4.0] - 2026-07-22
 
 ### Added
