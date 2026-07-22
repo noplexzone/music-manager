@@ -122,15 +122,28 @@ async def search_page(
     db: Annotated[AsyncSession, Depends(get_db)],
     q: str = "",
     tab: str = "catalog",
-    provider: str = "all",
+    provider: str = "primary",
 ) -> HTMLResponse:
     templates = _get_templates(request)
     runtime = await get_runtime_settings(db)
     metadata_providers = runtime.enabled_metadata_providers
-    requested = metadata_providers if provider == "all" else [provider]
+    if provider in {"", "primary"}:
+        requested = (
+            [runtime.primary_metadata_provider]
+            if runtime.primary_metadata_provider in metadata_providers
+            else []
+        )
+        provider = "primary"
+    elif provider == "all":
+        requested = metadata_providers
+    else:
+        requested = [provider] if provider in metadata_providers else []
     catalog_outcomes = []
-    if q and metadata_providers:
+    primary_error = None
+    if q and requested:
         catalog_outcomes = await search_catalog_artists(settings, q, requested)
+        if provider == "primary" and catalog_outcomes and not catalog_outcomes[0].state.available:
+            primary_error = catalog_outcomes[0].state.reason or "Primary provider unavailable"
     return templates.TemplateResponse(
         request,
         "search.html",
@@ -138,6 +151,8 @@ async def search_page(
             "tab": tab,
             "catalog_query": q,
             "catalog_provider": provider,
+            "primary_metadata_provider": runtime.primary_metadata_provider,
+            "primary_error": primary_error,
             "metadata_providers": runtime.metadata_providers,
             "catalog_outcomes": catalog_outcomes,
             "metadata_enabled": metadata_providers,
@@ -180,7 +195,7 @@ async def search_ui(
             {
                 "tab": "advanced",
                 "catalog_query": "",
-                "catalog_provider": "all",
+                "catalog_provider": "primary",
                 "metadata_providers": runtime.metadata_providers,
                 "catalog_outcomes": [],
                 "metadata_enabled": runtime.enabled_metadata_providers,
@@ -221,7 +236,7 @@ async def search_ui(
         {
             "tab": "advanced",
             "catalog_query": "",
-            "catalog_provider": "all",
+            "catalog_provider": "primary",
             "metadata_providers": runtime.metadata_providers,
             "catalog_outcomes": [],
             "metadata_enabled": runtime.enabled_metadata_providers,

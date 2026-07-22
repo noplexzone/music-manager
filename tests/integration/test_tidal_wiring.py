@@ -64,7 +64,7 @@ async def test_tidal_health_search_job_and_settings_wiring(
     )
     assert tested.status_code == 200 and tested.json()["available"] is True
 
-    settings_page = await client.get("/settings")
+    settings_page = await client.get("/settings/download-clients")
     jobs_redirect = await client.get("/jobs/ui/list")
     assert jobs_redirect.status_code in {307, 308}
     jobs_page = await client.get(jobs_redirect.headers["location"])

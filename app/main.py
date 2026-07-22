@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from importlib.resources import files
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -17,6 +22,7 @@ from app.database import get_db
 from app.routers import auth, health, imports, jobs, naming, search, tracks
 from app.routers import catalog as catalog_router
 from app.routers import settings as settings_router
+from app.services.artist_monitoring import DiscographyRefreshScheduler
 from app.services.dashboard import get_dashboard_data
 from app.settings_service import effective_settings_dep
 
@@ -24,6 +30,17 @@ _TEMPLATES_DIR = files("app") / "templates"
 _STATIC_DIR = files("app") / "static"
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    scheduler = DiscographyRefreshScheduler()
+    app.state.discography_scheduler = scheduler
+    await scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
 
 
 def create_app() -> FastAPI:
@@ -36,13 +53,15 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Music Manager",
-        version="0.3.0",
+        version="0.4.0",
         description="Self-hosted music acquisition and library management",
         docs_url="/api/docs",
         redoc_url="/api/redoc",
+        lifespan=lifespan,
     )
 
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    app.state.templates.env.filters["from_json"] = lambda value: json.loads(value or "[]")
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     app.include_router(health.router, tags=["health"])
@@ -73,6 +92,64 @@ def create_app() -> FastAPI:
             request,
             "index.html",
             {"dashboard": dashboard_data},
+        )
+
+    @app.get("/changelog", response_class=HTMLResponse, include_in_schema=False)
+    async def changelog_page(request: Request) -> Response:
+        try:
+            text = await asyncio.to_thread(Path("CHANGELOG.md").read_text)
+        except OSError:
+            text = "# Changelog\n\nNo changelog packaged."
+
+        def render(md: str) -> str:
+            import html
+            import re
+
+            out = []
+            in_list = False
+            for raw in md.splitlines():
+                line = raw.strip()
+                if not line:
+                    if in_list:
+                        out.append("</ul>")
+                        in_list = False
+                    continue
+                if line.startswith("### "):
+                    if in_list:
+                        out.append("</ul>")
+                        in_list = False
+                    out.append(f"<h3>{html.escape(line[4:])}</h3>")
+                elif line.startswith("## "):
+                    if in_list:
+                        out.append("</ul>")
+                        in_list = False
+                    out.append(f"<h2>{html.escape(line[3:])}</h2>")
+                elif line.startswith("# "):
+                    if in_list:
+                        out.append("</ul>")
+                        in_list = False
+                    out.append(f"<h1>{html.escape(line[2:])}</h1>")
+                elif line.startswith("- "):
+                    if not in_list:
+                        out.append("<ul>")
+                        in_list = True
+                    item = html.escape(line[2:])
+                    item = re.sub(
+                        r"\\[([^\\]]+)\\]\\((https?://[^)]+)\\)", r'<a href="\\2">\\1</a>', item
+                    )
+                    out.append(f"<li>{item}</li>")
+                else:
+                    if in_list:
+                        out.append("</ul>")
+                        in_list = False
+                    out.append(f"<p>{html.escape(line)}</p>")
+            if in_list:
+                out.append("</ul>")
+            return "\n".join(out)
+
+        templates: Jinja2Templates = request.app.state.templates
+        return templates.TemplateResponse(
+            request, "changelog.html", {"html": render(text), "app_version": app.version}
         )
 
     return app

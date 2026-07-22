@@ -118,7 +118,7 @@ async def test_member_cannot_save_settings(
 @pytest.mark.asyncio
 async def test_owner_can_open_settings_page_without_csrf_header(client: AsyncClient) -> None:
     client.headers.pop("X-CSRF-Token", None)
-    response = await client.get("/settings")
+    response = await client.get("/settings/download-sources")
     assert response.status_code == 200
 
 
@@ -140,5 +140,5 @@ async def test_member_cannot_read_settings(unauthenticated_client: AsyncClient) 
         "/api/auth/login",
         json={"username": "member", "password": "Member-Password-42!"},
     )
-    assert (await client.get("/settings")).status_code == 403
+    assert (await client.get("/settings/download-sources")).status_code == 403
     assert (await client.get("/api/settings")).status_code == 403

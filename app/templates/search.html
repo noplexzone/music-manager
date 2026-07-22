@@ -14,11 +14,12 @@
 <section class="card">
   <h2>Catalog search</h2>
   {% if not metadata_enabled %}
-    <div class="empty-state" role="status"><h3>No metadata providers enabled</h3><p>Enable MusicBrainz, Deezer, or iTunes before catalog search can run.</p><a class="btn" href="/settings#metadata-providers">Fix in Settings</a></div>
+    <div class="empty-state" role="status"><h3>No metadata providers enabled</h3><p>Enable MusicBrainz, Deezer, or iTunes before catalog search can run.</p><a class="btn" href="/settings/metadata">Fix in Settings</a></div>
   {% else %}
   <form method="get" action="/search" class="form-row" style="margin-bottom:1rem;">
     <input type="text" name="q" value="{{ catalog_query | e }}" placeholder="Search artist catalog…" style="flex:1; min-width:240px;" required>
     <select name="provider">
+      <option value="primary" {% if catalog_provider == 'primary' %}selected{% endif %}>Primary ({{ primary_metadata_provider }})</option>
       <option value="all" {% if catalog_provider == 'all' %}selected{% endif %}>All enabled providers</option>
       {% for item in metadata_providers %}{% if item.enabled %}
       <option value="{{ item.name }}" {% if catalog_provider == item.name %}selected{% endif %}>{{ item.name }}</option>
@@ -27,6 +28,7 @@
     <button type="submit" class="btn">Search catalog</button>
   </form>
   {% endif %}
+  {% if primary_error %}<div class="alert error">Primary provider {{ primary_metadata_provider }}: {{ primary_error }} <a href="/search?q={{ catalog_query | urlencode }}&provider=all">Search all instead</a></div>{% endif %}
   {% if catalog_outcomes %}
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
       {% for outcome in catalog_outcomes %}

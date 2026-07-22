@@ -6,6 +6,9 @@
   <h1>{{ artist.name }}</h1>
   {% if artist.mbid %}<p><span class="badge ok">MusicBrainz resolved</span> <code>{{ artist.mbid }}</code></p>{% else %}<p><span class="badge warn">Unresolved MBID</span></p>{% endif %}
 </header>
+<div class="form-row" style="margin-bottom:1rem;"><form method="post" action="/artists/catalog/{{ artist.id }}/enrich"><input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}"><button class="btn secondary" type="submit">Enrich metadata</button></form><span class="hint">Last enriched: {{ artist.last_enriched_at.strftime("%Y-%m-%d %H:%M") if artist.last_enriched_at else "never" }}</span></div>
+<form id="monitor-form" method="post" action="/artists/catalog/{{ artist.id }}/monitor" class="card" style="margin-bottom:1rem;"><input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}"><label><input type="checkbox" name="monitored" value="true" {% if artist.monitored %}checked{% endif %}> Monitor artist</label><label>New release policy <select name="monitor_policy"><option value="all" {% if artist.monitor_policy == "all" %}selected{% endif %}>All</option><option value="albums_only" {% if artist.monitor_policy == "albums_only" %}selected{% endif %}>Albums only</option><option value="none_new" {% if artist.monitor_policy == "none_new" %}selected{% endif %}>None new</option></select></label><div class="form-row"><button class="btn secondary" name="bulk" value="all">All</button><button class="btn secondary" name="bulk" value="albums_only">Albums only</button><button class="btn secondary" name="bulk" value="singles_off">Singles/EPs off</button><button class="btn secondary" name="bulk" value="none">None</button><button class="btn" type="submit">Save monitoring</button></div>
+</form>
 <form method="get" action="/artists/catalog/{{ artist.id }}" class="form-row" style="margin-bottom:1rem;">
   <select name="release_type">
     <option value="" {% if not release_type %}selected{% endif %}>All release types</option>
@@ -19,7 +22,7 @@
   <article class="card">
     {% if album.artwork_url %}<img src="{{ album.artwork_url | e }}" alt="" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:0.5rem;">{% endif %}
     <h3><a href="/albums/{{ album.id }}">{{ album.title }}</a></h3>
-    <p>{{ album.year or 'Unknown year' }} · {{ album.release_type or 'release' }} · {{ album.track_count or '?' }} tracks</p>
+    <p>{{ album.year or 'Unknown year' }} · {{ album.release_type or 'release' }} · {{ album.track_count or '?' }} tracks</p>{% if album.providers_json %}<p>{% for provider in album.providers_json | from_json %}<span class="badge info">{{ provider }}</span>{% endfor %}</p>{% endif %}{% if artist.monitored %}<label><input type="checkbox" name="album_monitored" form="monitor-form" value="{{ album.id }}" {% if album.monitored %}checked{% endif %}> Monitor album</label>{% endif %}
     <form method="post" action="/albums/{{ album.id }}/download">
       <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
       <button type="submit" class="btn secondary">Download album</button>

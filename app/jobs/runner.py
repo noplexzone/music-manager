@@ -26,7 +26,11 @@ from app.models.track import FingerprintState, IdentityResolutionState, Track
 from app.models.workflow import AcquisitionState
 from app.naming.convention import NamingError, render_path
 from app.schemas.search import SearchRequest, SearchResult
-from app.settings_service import DEFAULT_FREE_TEXT_RESULT_LIMIT, build_effective_settings
+from app.settings_service import (
+    DEFAULT_FREE_TEXT_RESULT_LIMIT,
+    build_effective_settings,
+    get_runtime_settings,
+)
 from app.sources.base import SourceAdapter
 from app.sources.prowlarr import ProwlarrAdapter
 from app.sources.sabnzbd import SabnzbdAdapter
@@ -74,7 +78,7 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
     await db.flush()
 
     try:
-        results = _selected_result(job) or await _fetch_results(job, cfg)
+        results = _selected_result(job) or await _call_fetch_results(job, cfg, db)
         catalog_album = await _load_catalog_album(db, job.catalog_album_id)
         catalog_tracks = list(catalog_album.tracks) if catalog_album is not None else []
         tracks_created = 0
@@ -167,10 +171,14 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
 
         if failures and tracks_created:
             job.status = JobStatus.partial
-            job.result_json = json.dumps({"tracks_created": tracks_created, "errors": failures})
+            payload = _job_payload(job)
+            payload.update({"tracks_created": tracks_created, "errors": failures})
+            job.result_json = json.dumps(payload, sort_keys=True)
         elif failures:
             job.status = JobStatus.failed
-            job.result_json = json.dumps({"tracks_created": tracks_created, "errors": failures})
+            payload = _job_payload(job)
+            payload.update({"tracks_created": tracks_created, "errors": failures})
+            job.result_json = json.dumps(payload, sort_keys=True)
         elif catalog_tracks and tracks_created < len(catalog_tracks):
             job.status = JobStatus.partial
             acquired_ids = {
@@ -179,12 +187,14 @@ async def _run_job_in_session(job_id: int, db: AsyncSession, cfg: Settings) -> N
                 if track.catalog_track_id is not None
             }
             missing = [track.title for track in catalog_tracks if track.id not in acquired_ids]
-            job.result_json = json.dumps(
-                {"tracks_created": tracks_created, "missing_tracks": missing}
-            )
+            payload = _job_payload(job)
+            payload.update({"tracks_created": tracks_created, "missing_tracks": missing})
+            job.result_json = json.dumps(payload, sort_keys=True)
         else:
             job.status = JobStatus.done
-            job.result_json = json.dumps({"tracks_created": tracks_created})
+            payload = _job_payload(job)
+            payload.update({"tracks_created": tracks_created})
+            job.result_json = json.dumps(payload, sort_keys=True)
         job.updated_at = _now()
     except ProviderError as exc:
         logger.warning("Job %d provider failure code %s", job_id, exc.code)
@@ -251,22 +261,110 @@ def _selected_result(job: Job) -> list[SearchResult] | None:
     return [SearchResult.model_validate(json.loads(job.selected_result_json))]
 
 
+async def _call_fetch_results(job: Job, cfg: Settings, db: AsyncSession) -> list[SearchResult]:
+    try:
+        return await _fetch_results(job, cfg, db)
+    except TypeError as exc:
+        # Backward-compatible test/plugin hook: older _fetch_results monkeypatches
+        # accepted only (job, cfg). Do not swallow TypeError raised inside the hook.
+        if "positional" not in str(exc) and "argument" not in str(exc):
+            raise
+        return list(await _fetch_results(job, cfg))  # type: ignore[call-arg]
+
+
+def _source_adapter(source: str, cfg: Settings) -> SourceAdapter:
+    if source == "slskd":
+        return SlskdAdapter(cfg.slskd_url, cfg.slskd_api_key)
+    if source == "prowlarr":
+        return ProwlarrAdapter(cfg.prowlarr_url, cfg.prowlarr_api_key)
+    if source == "youtube":
+        return YouTubeAdapter(cfg.ytdlp_cookies_file)
+    if source == "tidal":
+        return TidalAdapter(cfg.tidal_config_path, cfg.tidal_session_path, cfg.tidal_quality)
+    raise ValueError(f"Unknown source: {source}")
+
+
+def _job_payload(job: Job) -> dict[str, object]:
+    if not job.result_json:
+        return {}
+    with contextlib.suppress(json.JSONDecodeError):
+        payload = json.loads(job.result_json)
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def _set_acquisition_provenance(
+    job: Job, attempted: list[dict[str, object]], served_source: str | None = None
+) -> None:
+    payload = _job_payload(job)
+    payload["source_attempts"] = attempted
+    payload["attempted_sources"] = [str(item.get("source", "")) for item in attempted]
+    if served_source:
+        payload["served_source"] = served_source
+    job.result_json = json.dumps(payload, sort_keys=True)
+
+
 async def _fetch_results(
-    job: Job, cfg: Settings, limit: int = DEFAULT_FREE_TEXT_RESULT_LIMIT
+    job: Job, cfg: Settings, db: AsyncSession, limit: int = DEFAULT_FREE_TEXT_RESULT_LIMIT
 ) -> list[SearchResult]:
-    req = SearchRequest(query=job.query, sources=[job.source])
-    adapter: SourceAdapter
-    if job.source == "slskd":
-        adapter = SlskdAdapter(cfg.slskd_url, cfg.slskd_api_key)
-    elif job.source == "prowlarr":
-        adapter = ProwlarrAdapter(cfg.prowlarr_url, cfg.prowlarr_api_key)
-    elif job.source == "youtube":
-        adapter = YouTubeAdapter(cfg.ytdlp_cookies_file)
-    elif job.source == "tidal":
-        adapter = TidalAdapter(cfg.tidal_config_path, cfg.tidal_session_path, cfg.tidal_quality)
+    runtime = await get_runtime_settings(db)
+    configured = [
+        s for s in runtime.enabled_sources if s in {"slskd", "prowlarr", "youtube", "tidal"}
+    ]
+    priority_job = job.source == "priority"
+    if job.source in {"slskd", "prowlarr", "youtube", "tidal"}:
+        priority = [job.source]
     else:
-        raise ValueError(f"Unknown source: {job.source}")
-    return (await adapter.search(req))[:limit]
+        priority = configured
+    if not priority:
+        priority = ["slskd"]
+
+    attempted: list[dict[str, object]] = []
+    for source in priority:
+        req = SearchRequest(query=job.query, sources=[source])
+        try:
+            adapter = _source_adapter(source, cfg)
+            if priority_job:
+                cap = await adapter.health()
+                if not cap.available:
+                    attempted.append(
+                        {
+                            "source": source,
+                            "status": "unhealthy",
+                            "reason": cap.reason or "unavailable",
+                        }
+                    )
+                    _set_acquisition_provenance(job, attempted)
+                    await db.flush()
+                    continue
+            results = (await adapter.search(req))[:limit]
+            if not results:
+                attempted.append({"source": source, "status": "empty", "reason": "zero results"})
+                _set_acquisition_provenance(job, attempted)
+                await db.flush()
+                continue
+            attempted.append({"source": source, "status": "served", "results": len(results)})
+            job.source = source
+            _set_acquisition_provenance(job, attempted, source)
+            await db.flush()
+            return results
+        except ProviderError as exc:
+            attempted.append(
+                {"source": source, "status": "failed", "reason": exc.message, "code": exc.code}
+            )
+        except Exception as exc:
+            attempted.append(
+                {"source": source, "status": "failed", "reason": exc.__class__.__name__}
+            )
+        _set_acquisition_provenance(job, attempted)
+        await db.flush()
+    raise ProviderError(
+        "sources_exhausted",
+        "All configured download sources were exhausted",
+        "search",
+        True,
+    )
 
 
 async def _prepare_acquisition(

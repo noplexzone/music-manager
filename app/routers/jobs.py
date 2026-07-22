@@ -14,11 +14,11 @@ from app.auth import get_current_user, require_mutation
 from app.database import get_db
 from app.jobs.runner import run_job
 from app.models.job import Job, JobStatus
-from app.schemas.job import JobCreate, JobRead, JobSource, SelectedResultPayload
+from app.schemas.job import JobCreate, JobRead, SelectedResultPayload
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
-_ALLOWED_JOB_SOURCES: set[JobSource] = {"slskd", "prowlarr", "youtube", "tidal"}
+_ALLOWED_JOB_SOURCES: set[str] = {"priority", "slskd", "prowlarr", "youtube", "tidal"}
 
 
 def _get_templates(request: Request) -> Jinja2Templates:
@@ -107,7 +107,7 @@ async def create_job_ui(
     _user: Annotated[object, Depends(require_mutation)],
 ) -> RedirectResponse:
     form = await request.form()
-    source = str(form.get("source", "slskd")).strip()
+    source = str(form.get("source", "priority")).strip()
     query = str(form.get("query", "")).strip()
     selected_raw = str(form.get("selected_result", "")).strip()
     selected: SelectedResultPayload | None = None

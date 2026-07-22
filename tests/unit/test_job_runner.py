@@ -304,3 +304,128 @@ async def test_run_job_uses_database_backed_effective_settings(
     monkeypatch.setattr(runner, "_run_job_in_session", _run)
     await runner.run_job(job.id, db_session)
     assert observed == [expected]
+
+
+async def test_priority_job_falls_back_when_first_source_empty(
+    db_session: AsyncSession, test_settings: Settings, monkeypatch: object
+) -> None:
+    from pytest import MonkeyPatch
+
+    from app.settings_service import save_runtime_settings
+
+    assert isinstance(monkeypatch, MonkeyPatch)
+    await save_runtime_settings(
+        db_session,
+        [{"name": "slskd", "enabled": True}, {"name": "youtube", "enabled": True}],
+        10,
+        metadata_providers=[{"name": "musicbrainz", "enabled": True}],
+        primary_metadata_provider="musicbrainz",
+    )
+    job = Job(source="priority", query="artist album", status=JobStatus.pending)
+    db_session.add(job)
+    await db_session.flush()
+    calls: list[str] = []
+
+    class FakeAdapter:
+        def __init__(self, source: str) -> None:
+            self.source = source
+
+        async def health(self) -> CapabilityState:
+            return CapabilityState(available=True)
+
+        async def search(self, request: object) -> Sequence[SearchResult]:
+            calls.append(self.source)
+            if self.source == "slskd":
+                return []
+            return [SearchResult(source="youtube", title="Served", url="https://youtu.be/1")]
+
+    monkeypatch.setattr(runner, "_source_adapter", lambda source, cfg: FakeAdapter(source))
+
+    results = await runner._fetch_results(job, test_settings, db_session)
+
+    assert calls == ["slskd", "youtube"]
+    assert job.source == "youtube"
+    assert results[0].source == "youtube"
+    assert '"attempted_sources": ["slskd", "youtube"]' in (job.result_json or "")
+    assert '"served_source": "youtube"' in (job.result_json or "")
+
+
+async def test_priority_job_falls_back_when_first_source_unhealthy(
+    db_session: AsyncSession, test_settings: Settings, monkeypatch: object
+) -> None:
+    from pytest import MonkeyPatch
+
+    from app.settings_service import save_runtime_settings
+
+    assert isinstance(monkeypatch, MonkeyPatch)
+    await save_runtime_settings(
+        db_session,
+        [{"name": "slskd", "enabled": True}, {"name": "youtube", "enabled": True}],
+        10,
+        metadata_providers=[{"name": "musicbrainz", "enabled": True}],
+        primary_metadata_provider="musicbrainz",
+    )
+    job = Job(source="priority", query="artist album", status=JobStatus.pending)
+    db_session.add(job)
+    await db_session.flush()
+
+    class FakeAdapter:
+        def __init__(self, source: str) -> None:
+            self.source = source
+
+        async def health(self) -> CapabilityState:
+            if self.source == "slskd":
+                return CapabilityState(available=False, reason="offline")
+            return CapabilityState(available=True)
+
+        async def search(self, request: object) -> Sequence[SearchResult]:
+            return [SearchResult(source=self.source, title="Served", url="https://youtu.be/1")]
+
+    monkeypatch.setattr(runner, "_source_adapter", lambda source, cfg: FakeAdapter(source))
+
+    results = await runner._fetch_results(job, test_settings, db_session)
+
+    assert job.source == "youtube"
+    assert results[0].source == "youtube"
+    assert '"status": "unhealthy"' in (job.result_json or "")
+
+
+async def test_priority_job_records_clear_failure_when_all_sources_exhausted(
+    db_session: AsyncSession, test_settings: Settings, monkeypatch: object
+) -> None:
+    from pytest import MonkeyPatch
+
+    from app.settings_service import save_runtime_settings
+
+    assert isinstance(monkeypatch, MonkeyPatch)
+    await save_runtime_settings(
+        db_session,
+        [{"name": "slskd", "enabled": True}, {"name": "youtube", "enabled": True}],
+        10,
+        metadata_providers=[{"name": "musicbrainz", "enabled": True}],
+        primary_metadata_provider="musicbrainz",
+    )
+    job = Job(source="priority", query="artist album", status=JobStatus.pending)
+    db_session.add(job)
+    await db_session.flush()
+
+    class FakeAdapter:
+        def __init__(self, source: str) -> None:
+            self.source = source
+
+        async def health(self) -> CapabilityState:
+            return CapabilityState(available=True)
+
+        async def search(self, request: object) -> Sequence[SearchResult]:
+            if self.source == "slskd":
+                return []
+            raise ProviderError("timeout", "provider timed out", "search", True)
+
+    monkeypatch.setattr(runner, "_source_adapter", lambda source, cfg: FakeAdapter(source))
+
+    with pytest.raises(ProviderError, match="All configured download sources were exhausted"):
+        await runner._fetch_results(job, test_settings, db_session)
+
+    assert job.source == "priority"
+    assert '"status": "empty"' in (job.result_json or "")
+    assert '"code": "timeout"' in (job.result_json or "")
