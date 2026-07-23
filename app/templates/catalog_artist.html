@@ -1,39 +1,117 @@
 {% extends "base.html" %}
 {% block title %}{{ artist.name }} – Catalog{% endblock %}
 {% block content %}
-<header class="page-header">
-  <p class="eyebrow">Catalog artist</p>
-  <h1>{{ artist.name }}</h1>
-  {% if artist.mbid %}<p><span class="badge ok">MusicBrainz resolved</span> <code>{{ artist.mbid }}</code></p>{% else %}<p><span class="badge warn">Unresolved MBID</span></p>{% endif %}
-</header>
-<form method="post" action="/artists/catalog/{{ artist.id }}/monitor" style="margin-bottom:1rem;">
-  <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
-  <input type="hidden" name="quick" value="1">
-  <button class="btn" type="submit">{% if artist.monitored %}Monitoring ✓{% else %}Monitor{% endif %}</button>
-</form>
-<div class="form-row" style="margin-bottom:1rem;"><form method="post" action="/artists/catalog/{{ artist.id }}/enrich"><input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}"><button class="btn secondary" type="submit">Enrich metadata</button></form><span class="hint">Last enriched: {{ artist.last_enriched_at.strftime("%Y-%m-%d %H:%M") if artist.last_enriched_at else "never" }}</span></div>
-<form id="monitor-form" method="post" action="/artists/catalog/{{ artist.id }}/monitor" class="card" style="margin-bottom:1rem;"><input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}"><label><input type="checkbox" name="monitored" value="true" {% if artist.monitored %}checked{% endif %}> Monitor artist</label><label>New release policy <select name="monitor_policy"><option value="all" {% if artist.monitor_policy == "all" %}selected{% endif %}>All</option><option value="albums_only" {% if artist.monitor_policy == "albums_only" %}selected{% endif %}>Albums only</option><option value="none_new" {% if artist.monitor_policy == "none_new" %}selected{% endif %}>None new</option></select></label><div class="form-row"><button class="btn secondary" name="bulk" value="all">All</button><button class="btn secondary" name="bulk" value="albums_only">Albums only</button><button class="btn secondary" name="bulk" value="singles_off">Singles/EPs off</button><button class="btn secondary" name="bulk" value="none">None</button><button class="btn" type="submit">Save monitoring</button></div>
-</form>
-<form method="get" action="/artists/catalog/{{ artist.id }}" class="form-row" style="margin-bottom:1rem;">
-  <select name="release_type">
-    <option value="" {% if not release_type %}selected{% endif %}>All release types</option>
-    {% for rt in release_types %}<option value="{{ rt }}" {% if release_type == rt %}selected{% endif %}>{{ rt }}</option>{% endfor %}
-  </select>
-  <button class="btn secondary" type="submit">Filter</button>
-</form>
+{% set csrf_token = request.cookies.get('csrf', '') | e %}
+{% set total_releases = counts_by_type.albums + counts_by_type.singles_eps + counts_by_type.compilations %}
+{% set provenance = artist.provenance_json | from_json if artist.provenance_json else {} %}
+<nav class="breadcrumb"><a href="/artists">Artists</a> / {{ artist.name }}</nav>
+<section class="artist-view-hero card">
+  <div class="artist-view-art" aria-hidden="true">
+    {% if artist.artwork_url %}
+      <img loading="lazy" src="{{ artist.artwork_url | e }}" alt="">
+    {% else %}
+      <span>{{ artist.name[:2] | upper }}</span>
+    {% endif %}
+  </div>
+  <div class="artist-view-copy">
+    <p class="eyebrow">Catalog artist</p>
+    <div class="artist-title-row">
+      <h1>{{ artist.name }}</h1>
+      {% if artist.mbid %}
+        <span class="badge ok artist-identity" title="MusicBrainz ID: {{ artist.mbid }}">MusicBrainz ✓</span>
+      {% else %}
+        <span class="badge info artist-identity" title="MusicBrainz ID not resolved yet">Unresolved</span>
+      {% endif %}
+    </div>
+    <p class="artist-release-summary">
+      {% if counts_by_type.albums %}{{ counts_by_type.albums }} album{{ '' if counts_by_type.albums == 1 else 's' }}{% endif %}
+      {% if counts_by_type.singles_eps %}{% if counts_by_type.albums %} · {% endif %}{{ counts_by_type.singles_eps }} single{{ '' if counts_by_type.singles_eps == 1 else 's' }}/EP{{ '' if counts_by_type.singles_eps == 1 else 's' }}{% endif %}
+      {% if counts_by_type.compilations %}{% if counts_by_type.albums or counts_by_type.singles_eps %} · {% endif %}{{ counts_by_type.compilations }} compilation{{ '' if counts_by_type.compilations == 1 else 's' }}{% endif %}
+      {% if not total_releases %}No releases stored yet{% endif %}
+    </p>
+    {% if provenance.last_enrichment_error %}<p class="alert error compact">Last enrichment failed: {{ provenance.last_enrichment_error.message }}</p>{% endif %}
+    <div class="artist-actions">
+      <form method="post" action="/artists/catalog/{{ artist.id }}/monitor">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="quick" value="1">
+        <button class="btn" type="submit">{% if artist.monitored %}Monitoring ✓{% else %}Monitor{% endif %}</button>
+      </form>
+      <form method="post" action="/artists/catalog/{{ artist.id }}/enrich">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn secondary" type="submit">Enrich metadata</button>
+      </form>
+      <span class="hint">Last enriched: {{ artist.last_enriched_at.strftime("%Y-%m-%d %H:%M") if artist.last_enriched_at else "never" }}</span>
+      {% if artist.monitored %}
+      <form method="post" action="/artists/catalog/{{ artist.id }}/download-monitored">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn secondary" type="submit">Download all monitored</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<details class="card monitoring-options">
+  <summary>Monitoring options</summary>
+  <form id="monitor-form" method="post" action="/artists/catalog/{{ artist.id }}/monitor">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="check-label switch-label"><input type="checkbox" name="monitored" value="true" {% if artist.monitored %}checked{% endif %}> <span>Monitor artist</span></label>
+    <label>New release policy
+      <select name="monitor_policy">
+        <option value="all" {% if artist.monitor_policy == "all" %}selected{% endif %}>All</option>
+        <option value="albums_only" {% if artist.monitor_policy == "albums_only" %}selected{% endif %}>Albums only</option>
+        <option value="none_new" {% if artist.monitor_policy == "none_new" %}selected{% endif %}>None new</option>
+      </select>
+    </label>
+    <div class="form-row">
+      <button class="btn secondary" name="bulk" value="all">All</button>
+      <button class="btn secondary" name="bulk" value="albums_only">Albums only</button>
+      <button class="btn secondary" name="bulk" value="singles_off">Singles/EPs off</button>
+      <button class="btn secondary" name="bulk" value="none">None</button>
+      <button class="btn" type="submit">Save monitoring</button>
+    </div>
+  </form>
+</details>
+
+<nav class="discography-filters" aria-label="Discography filters">
+  {% for value, label in filter_options %}
+    <a class="filter-chip {% if release_type == value %}active{% endif %}" href="/artists/catalog/{{ artist.id }}{% if value or sort %}?{% if value %}release_type={{ value }}{% endif %}{% if value and sort %}&{% endif %}{% if sort %}sort={{ sort }}{% endif %}{% endif %}">{{ label }}</a>
+  {% endfor %}
+  <a class="filter-chip" href="/artists/catalog/{{ artist.id }}{% if release_type or sort == 'desc' %}?{% if release_type %}release_type={{ release_type }}&{% endif %}sort={{ 'asc' if sort != 'asc' else 'desc' }}{% endif %}">Year {{ '↑' if sort == 'asc' else '↓' }}</a>
+</nav>
+
 {% if albums %}
-<div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1rem;">
-{% for album in albums %}
-  <article class="card">
-    <div class="artwork-placeholder">{% if album.artwork_url %}<img loading="lazy" src="{{ album.artwork_url | e }}" alt="" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:0.5rem;">{% endif %}</div>
-    <h3><a href="/albums/{{ album.id }}">{{ album.title }}</a></h3>
-    <p>{{ album.year or 'Unknown year' }} · {{ album.release_type or 'release' }} · {{ album.track_count or '?' }} tracks</p>{% if album.providers_json %}<p>{% for provider in album.providers_json | from_json %}<span class="badge info">{{ display_name(provider) }}</span>{% endfor %}</p>{% endif %}{% if artist.monitored %}<label><input type="checkbox" name="album_monitored" form="monitor-form" value="{{ album.id }}" {% if album.monitored %}checked{% endif %}> Monitor album</label>{% endif %}
-    <form method="post" action="/albums/{{ album.id }}/download">
-      <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}">
-      <button type="submit" class="btn secondary">Download album</button>
-    </form>
-  </article>
-{% endfor %}
-</div>
-{% else %}<div class="empty-state"><h3>No releases found</h3><p>Try another filter or provider result.</p></div>{% endif %}
+  {% for heading, section_albums in grouped_albums %}
+    {% if section_albums %}
+      <section class="discography-section">
+        {% if not release_type %}<h2>{{ heading }}</h2>{% endif %}
+        <div class="album-grid">
+        {% for album in section_albums %}
+          <article class="album-card">
+            <a class="album-art" href="/albums/{{ album.id }}" aria-label="Open {{ album.title }}">
+              {% if album.artwork_url %}<img loading="lazy" src="{{ album.artwork_url | e }}" alt="">{% else %}<span>{{ album.title[:2] | upper }}</span>{% endif %}
+            </a>
+            <div class="album-card-body">
+              <h3><a href="/albums/{{ album.id }}" title="{{ album.title | e }}">{{ album.title }}</a></h3>
+              <p class="muted-line">
+                {% if album.year %}{{ album.year }}{% endif %}{% if album.year and album.release_type %} · {% endif %}{% if album.release_type %}{{ album.release_type }}{% endif %}{% if album.track_count %}{% if album.year or album.release_type %} · {% endif %}{{ album.track_count }} tracks{% endif %}
+              </p>
+              {% if album.providers_json %}<p class="provider-badges">{% for provider in album.providers_json | from_json %}<span class="badge info">{{ display_name(provider) }}</span>{% endfor %}</p>{% endif %}
+              <div class="album-card-actions">
+                {% if artist.monitored %}<label class="check-label compact-check"><input type="checkbox" name="album_monitored" form="monitor-form" value="{{ album.id }}" {% if album.monitored %}checked{% endif %}> <span>Monitor</span></label>{% endif %}
+                <form method="post" action="/albums/{{ album.id }}/download">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="btn secondary album-download" aria-label="Download album">Download<span class="sr-only"> album</span></button>
+                </form>
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+  {% endfor %}
+{% else %}
+  <div class="empty-state"><h3>No releases found</h3><p>Try another filter or provider result.</p></div>
+{% endif %}
 {% endblock %}

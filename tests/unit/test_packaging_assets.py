@@ -56,3 +56,24 @@ def test_settings_forms_are_native_and_not_double_submitted() -> None:
     assert 'headers: {"Content-Type": "application/json"' not in settings
     assert 'method="post" action="/settings/save"' in settings
     assert '"tidal_config_path","tidal_session_path","tidal_quality"' in setup
+
+
+def test_favicon_png_has_transparent_corners_and_touch_icon_is_opaque() -> None:
+    from PIL import Image
+
+    favicon = Image.open("app/static/branding/favicon-32.png").convert("RGBA")
+    assert favicon.getpixel((0, 0))[3] == 0
+    assert favicon.getpixel((31, 31))[3] == 0
+
+    touch = Image.open("app/static/branding/apple-touch-icon.png").convert("RGBA")
+    assert touch.getpixel((0, 0))[3] == 255
+
+
+def test_favicon_ico_entries_carry_alpha() -> None:
+    from PIL import Image
+
+    ico = Image.open("app/static/branding/favicon.ico")
+    for index in range(getattr(ico, "n_frames", 1)):
+        ico.seek(index)
+        image = ico.convert("RGBA")
+        assert image.getpixel((0, 0))[3] == 0

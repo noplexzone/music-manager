@@ -4,11 +4,12 @@ import asyncio
 import json
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -17,6 +18,8 @@ from app.metadata.deezer import DeezerClient
 from app.metadata.itunes import ITunesClient
 from app.metadata.musicbrainz import MusicBrainzClient
 from app.models.catalog_entities import CatalogAlbum, CatalogAlbumTrack, CatalogArtist
+from app.models.job import Job
+from app.models.track import Track
 from app.sources.base import CapabilityState
 
 VALID_METADATA_PROVIDERS = {"musicbrainz", "deezer", "itunes"}
@@ -162,19 +165,39 @@ async def upsert_catalog_album(
     if filters:
         album = (await db.scalars(select(CatalogAlbum).where(or_(*filters)).limit(1))).first()
     if album is None:
+        candidates = list(
+            (
+                await db.scalars(select(CatalogAlbum).where(CatalogAlbum.artist_id == artist.id))
+            ).all()
+        )
+        album = next(
+            (candidate for candidate in candidates if _album_keys_match(candidate, hit)), None
+        )
+    if album is None:
         album = CatalogAlbum(artist_id=artist.id, title=hit.title)
         db.add(album)
+    _apply_album_hit(album, artist, hit, ids)
+    await db.flush()
+    return album
+
+
+def _apply_album_hit(
+    album: CatalogAlbum,
+    artist: CatalogArtist,
+    hit: AlbumHit | AlbumDetail,
+    ids: dict[str, str | None] | None = None,
+) -> None:
+    ids = ids or provider_ids_for_hit(hit)
     album.artist_id = artist.id
     album.title = hit.title or album.title
     album.year = hit.year or album.year
     album.release_type = hit.release_type or album.release_type
     album.artwork_url = hit.artwork_url or album.artwork_url
-    album.track_count = hit.track_count or album.track_count
+    if hit.track_count and album.track_count is None:
+        album.track_count = hit.track_count
     album.mbid = ids["mbid"] or album.mbid
     album.deezer_id = ids["deezer_id"] or album.deezer_id
     album.itunes_id = ids["itunes_id"] or album.itunes_id
-    await db.flush()
-    return album
 
 
 async def fetch_and_store_album(
@@ -209,18 +232,90 @@ async def fetch_and_store_album(
     return album
 
 
+_PUNCT_TRANSLATION = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u2032": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u201f": '"',
+        "\u2033": '"',
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2015": "-",
+        "\u2212": "-",
+    }
+)
+
+
 def _norm_title(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+    folded = unicodedata.normalize("NFKD", value.translate(_PUNCT_TRANSLATION))
+    ascii_text = folded.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", ascii_text.casefold())).strip()
+
+
+def _norm_release_type(value: str | None) -> str:
+    normalized = _norm_title(value or "album")
+    if normalized in {"ep", "single"}:
+        return "single_ep"
+    if normalized in {"compilation", "compilations"}:
+        return "compilation"
+    return normalized or "album"
 
 
 def _edition_marker(value: str) -> str:
-    lowered = value.casefold()
+    lowered = _norm_title(value)
     markers = [m for m in ["deluxe", "remaster", "anniversary", "expanded"] if m in lowered]
     return ":".join(markers)
 
 
-def _album_key(hit: Any) -> tuple[str, str | None, str]:
-    return (_norm_title(str(hit.title)), hit.year, _edition_marker(str(hit.title)))
+def _album_key(hit: Any) -> tuple[str, str | None, str, str]:
+    return (
+        _norm_title(str(hit.title)),
+        getattr(hit, "year", None),
+        _edition_marker(str(hit.title)),
+        _norm_release_type(getattr(hit, "release_type", None)),
+    )
+
+
+def _album_keys_match(left: Any, right: Any) -> bool:
+    lt, ly, le, lr = _album_key(left)
+    rt, ry, re_, rr = _album_key(right)
+    if (lt, le, lr) != (rt, re_, rr):
+        return False
+    return ly == ry or ly is None or ry is None
+
+
+def _merge_provider_json(*values: str | None) -> str | None:
+    providers: set[str] = set()
+    for raw in values:
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            providers.update(str(v) for v in parsed if v)
+    return json.dumps(sorted(providers)) if providers else None
+
+
+def _album_data_score(album: CatalogAlbum) -> tuple[int, int, int, int, int, int]:
+    return (
+        1 if album.mbid else 0,
+        1 if album.track_count else 0,
+        1 if album.artwork_url else 0,
+        1 if album.deezer_id else 0,
+        1 if album.itunes_id else 0,
+        album.id or 0,
+    )
 
 
 def _name_similarity(a: str, b: str) -> float:
@@ -252,7 +347,6 @@ async def enrich_catalog_artist(
         json.loads(artist.provenance_json or "{}") if artist.provenance_json else {}
     )
     existing_albums = list(artist.albums)
-    existing_keys = {_album_key(a) for a in existing_albums}
     ambiguous: list[dict[str, object]] = []
     for provider_name in [
         p for p in enabled_providers if p in VALID_METADATA_PROVIDERS and p not in skip
@@ -267,8 +361,12 @@ async def enrich_catalog_artist(
             try:
                 detail = await provider.get_artist(hit.provider_id)
                 albums = await provider.get_discography(hit.provider_id)
-                overlap = len({_album_key(a) for a in albums} & existing_keys)
-                score += min(overlap / max(len(existing_keys), 1), 1.0)
+                overlap = sum(
+                    1
+                    for candidate in albums
+                    if any(_album_keys_match(candidate, existing) for existing in existing_albums)
+                )
+                score += min(overlap / max(len(existing_albums), 1), 1.0)
             except Exception:
                 detail = None
             scored.append((score, hit))
@@ -296,16 +394,16 @@ async def enrich_catalog_artist(
         if not artist.itunes_id and ids.get("itunes_id"):
             artist.itunes_id = ids["itunes_id"]
             provenance["itunes_id"] = provider_name
-        if detail.artwork_url and (
-            not artist.artwork_url or len(detail.artwork_url) > len(artist.artwork_url)
-        ):
+        if detail.artwork_url and not artist.artwork_url:
             artist.artwork_url = detail.artwork_url
             provenance["artwork_url"] = provider_name
         for album_hit in await provider.get_discography(chosen):
-            key = _album_key(album_hit)
-            album = next((a for a in artist.albums if _album_key(a) == key), None)
+            album = next((a for a in artist.albums if _album_keys_match(a, album_hit)), None)
             if album is None:
                 album = await upsert_catalog_album(db, artist, album_hit)
+                artist.albums.append(album)
+            else:
+                _apply_album_hit(album, artist, album_hit)
             providers = (
                 set(json.loads(album.providers_json or "[]")) if album.providers_json else set()
             )
@@ -317,3 +415,73 @@ async def enrich_catalog_artist(
     if ambiguous:
         return {"status": "ambiguous", "candidates": ambiguous}
     return {"status": "ok"}
+
+
+async def reconcile_duplicate_catalog_albums(
+    db: AsyncSession, artist_id: int | None = None
+) -> int:
+    """Merge legacy duplicate catalog albums produced by older title normalization.
+
+    Idempotent: album title/type groups only merge when normalized titles and edition
+    markers match, with a missing year matching the known year for that title/type.
+    """
+    stmt = select(CatalogAlbum)
+    if artist_id is not None:
+        stmt = stmt.where(CatalogAlbum.artist_id == artist_id)
+    albums = list((await db.scalars(stmt.order_by(CatalogAlbum.artist_id, CatalogAlbum.id))).all())
+    merged = 0
+    consumed: set[int] = set()
+    for album in albums:
+        if album.id in consumed:
+            continue
+        group = [
+            other
+            for other in albums
+            if other.id not in consumed and _album_keys_match(album, other)
+        ]
+        if len(group) < 2:
+            continue
+        winner = max(group, key=_album_data_score)
+        for loser in group:
+            if loser.id == winner.id:
+                continue
+            loser_mbid = loser.mbid
+            loser_deezer_id = loser.deezer_id
+            loser_itunes_id = loser.itunes_id
+            loser.mbid = None
+            loser.deezer_id = None
+            loser.itunes_id = None
+            await db.flush()
+            winner.monitored = bool(winner.monitored or loser.monitored)
+            winner.in_library = bool(winner.in_library or loser.in_library)
+            winner.year = winner.year or loser.year
+            winner.release_type = winner.release_type or loser.release_type
+            winner.artwork_url = winner.artwork_url or loser.artwork_url
+            winner.track_count = winner.track_count or loser.track_count
+            winner.mbid = winner.mbid or loser_mbid
+            winner.deezer_id = winner.deezer_id or loser_deezer_id
+            winner.itunes_id = winner.itunes_id or loser_itunes_id
+            winner.providers_json = _merge_provider_json(
+                winner.providers_json, loser.providers_json
+            )
+            await db.execute(
+                update(CatalogAlbumTrack)
+                .where(CatalogAlbumTrack.album_id == loser.id)
+                .values(album_id=winner.id)
+            )
+            await db.execute(
+                update(Job)
+                .where(Job.catalog_album_id == loser.id)
+                .values(catalog_album_id=winner.id)
+            )
+            await db.execute(
+                update(Track)
+                .where(Track.catalog_album_id == loser.id)
+                .values(catalog_album_id=winner.id)
+            )
+            await db.delete(loser)
+            consumed.add(loser.id)
+            merged += 1
+        consumed.add(winner.id)
+    await db.flush()
+    return merged

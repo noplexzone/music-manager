@@ -42,3 +42,15 @@ def test_decrypt_returns_string() -> None:
     token = encrypt_secret("hello", "key")
     result = decrypt_secret(token, "key")
     assert isinstance(result, str)
+
+
+def test_fernet_derivation_is_cached_across_repeated_decrypts() -> None:
+    from app.crypto import _fernet
+
+    _fernet.cache_clear()
+    token = encrypt_secret("cached-secret", "cache-key")
+    for _ in range(50):
+        assert decrypt_secret(token, "cache-key") == "cached-secret"
+    info = _fernet.cache_info()
+    assert info.misses == 1
+    assert info.hits >= 50

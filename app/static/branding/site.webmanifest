@@ -4,7 +4,7 @@
   "description": "Private self-hosted music acquisition and library management",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#313a41",
+  "background_color": "#010000",
   "theme_color": "#313a41",
   "icons": [
     {

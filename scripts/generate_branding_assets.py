@@ -54,6 +54,45 @@ def _sample_bg_color(img: Image.Image) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def _corner_background(img: Image.Image, tolerance: int = 10) -> tuple[int, int, int] | None:
+    rgba = img.convert("RGBA")
+    coords = [(0, 0), (rgba.width - 1, 0), (0, rgba.height - 1), (rgba.width - 1, rgba.height - 1)]
+    corners = [rgba.getpixel(coord) for coord in coords]
+    if any(pixel[3] < 250 for pixel in corners):
+        return None
+    rgb = tuple(int(round(sum(pixel[i] for pixel in corners) / 4)) for i in range(3))
+    if any(sum(abs(pixel[i] - rgb[i]) for i in range(3)) > tolerance for pixel in corners):
+        return None
+    return rgb
+
+
+def _within_tolerance(
+    pixel: tuple[int, int, int, int], bg: tuple[int, int, int], tolerance: int
+) -> bool:
+    return pixel[3] >= 250 and max(abs(pixel[i] - bg[i]) for i in range(3)) <= tolerance
+
+
+def _key_corner_background_to_alpha(img: Image.Image, tolerance: int = 14) -> Image.Image:
+    rgba = img.convert("RGBA")
+    bg = _corner_background(rgba, tolerance=tolerance)
+    if bg is None:
+        return rgba
+    pixels = rgba.load()
+    stack = [(0, 0), (rgba.width - 1, 0), (0, rgba.height - 1), (rgba.width - 1, rgba.height - 1)]
+    seen: set[tuple[int, int]] = set()
+    while stack:
+        x, y = stack.pop()
+        if (x, y) in seen or x < 0 or y < 0 or x >= rgba.width or y >= rgba.height:
+            continue
+        seen.add((x, y))
+        pixel = pixels[x, y]
+        if not _within_tolerance(pixel, bg, tolerance):
+            continue
+        pixels[x, y] = (pixel[0], pixel[1], pixel[2], 0)
+        stack.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+    return rgba
+
+
 def _resize_square(img: Image.Image, size: int) -> Image.Image:
     return img.convert("RGBA").resize((size, size), Image.LANCZOS)
 
@@ -92,13 +131,19 @@ def main() -> None:
 
     icon_src = Image.open(SOURCE_ICON)
     favicon_src = Image.open(SOURCE_FAVICON)
+    favicon_transparent = _key_corner_background_to_alpha(favicon_src)
 
     theme_color = _sample_theme_color(icon_src)
-    bg_color = _sample_bg_color(icon_src)
+    detected_icon_bg = _corner_background(icon_src)
+    bg_color = (
+        f"#{detected_icon_bg[0]:02x}{detected_icon_bg[1]:02x}{detected_icon_bg[2]:02x}"
+        if detected_icon_bg
+        else _sample_bg_color(icon_src)
+    )
 
     sizes: dict[str, tuple[Image.Image, int]] = {
-        "favicon-16.png": (favicon_src, 16),
-        "favicon-32.png": (favicon_src, 32),
+        "favicon-16.png": (favicon_transparent, 16),
+        "favicon-32.png": (favicon_transparent, 32),
         "icon-32.png": (icon_src, 32),
         "apple-touch-icon.png": (icon_src, 180),
         "icon-192.png": (icon_src, 192),
@@ -110,7 +155,7 @@ def main() -> None:
         _resize_square(src, size).save(out, format="PNG")
         print(f"  wrote {out}")
 
-    ico_images = [_resize_square(favicon_src, s) for s in (16, 32, 48)]
+    ico_images = [_resize_square(favicon_transparent, s) for s in (16, 32, 48)]
     ico_path = BRANDING / "favicon.ico"
     ico_path.write_bytes(_build_ico(ico_images))
     print(f"  wrote {ico_path}")
