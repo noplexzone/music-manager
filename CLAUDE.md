@@ -1,14 +1,14 @@
-# Music Manager — Project Constraints for Claude
+# Audiohoard — Project Constraints for Claude
 
 ## What this project is
 
-A private, self-hosted FastAPI application that coordinates music acquisition from multiple sources, enriches tracks with metadata, fingerprints audio, and enforces strict library naming conventions.
+A private, self-hosted FastAPI application (Audiohoard) that coordinates music acquisition from multiple sources, enriches tracks with metadata, fingerprints audio, and enforces strict library naming conventions.
 
 ## Hard constraints
 
 ### Sources
 - **slskd**, **Prowlarr+SABnzbd**, and **YouTube** are the only acquisition sources in scope for v0.1.0.
-- **TIDAL support is delegated to an operator-installed, authenticated Tidal-DL backend.** Music Manager must never stub, mock, simulate, or synthesize TIDAL results; the TIDAL source reports `unavailable` with a clear reason until the backend is configured and passes a live health check. The operator is responsible for the rights/subscription required by their downloader.
+- **TIDAL support is delegated to an operator-installed, authenticated Tidal-DL backend.** Audiohoard must never stub, mock, simulate, or synthesize TIDAL results; the TIDAL source reports `unavailable` with a clear reason until the backend is configured and passes a live health check. The operator is responsible for the rights/subscription required by their downloader.
 - New sources must implement the `SourceAdapter` protocol and declare their capability state; capability states are surfaced to the UI without hiding failures.
 
 ### Metadata

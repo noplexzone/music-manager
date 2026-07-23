@@ -15,6 +15,7 @@ from app.models.auth import AppUser
 from app.naming.convention import render_path
 from app.schemas.health import SourceStatus
 from app.schemas.settings import SettingField, SettingsSaveRequest, SettingsTestRequest
+from app.services.health_status import get_health_status_service
 from app.settings_service import (
     DEFAULT_METADATA_PROVIDERS,
     DEFAULT_SOURCE_PRIORITY,
@@ -147,7 +148,9 @@ async def settings_section_page(
         for k, v in effective.items()
     }
     runtime = await get_runtime_settings(db)
-    client_statuses = await _client_statuses(db, env)
+    client_statuses = (
+        get_health_status_service().snapshot() if section == "download-clients" else {}
+    )
     return _get_templates(request).TemplateResponse(
         request,
         "settings.html",
@@ -191,6 +194,9 @@ async def save_runtime_settings_page(
     refresh_hours = int(
         str(form.get("discography_refresh_hours", runtime.discography_refresh_hours)) or "24"
     )
+    source_budget = int(
+        str(form.get("source_search_budget_seconds", runtime.source_search_budget_seconds)) or "15"
+    )
     auto_download = str(form.get("auto_download_wanted", "")).lower() in {"1", "true", "yes", "on"}
     await save_runtime_settings(
         db,
@@ -200,6 +206,7 @@ async def save_runtime_settings_page(
         primary,
         refresh_hours,
         auto_download,
+        source_budget,
     )
     await db.commit()
     section = str(form.get("section", ""))
@@ -222,6 +229,21 @@ async def save_settings_page(
     await db.commit()
     target = section if section in SETTINGS_SECTIONS else "download-clients"
     return RedirectResponse(f"/settings/{target}?saved=1", status_code=303)
+
+
+@router.post("/settings/refresh", include_in_schema=False)
+async def refresh_provider_status_page(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    env: Annotated[Settings, Depends(get_settings)],
+    _user: Annotated[object, Depends(require_mutation)],
+) -> RedirectResponse:
+    form = await request.form()
+    provider = str(form.get("provider", ""))
+    section = str(form.get("section", "download-clients"))
+    await get_health_status_service().refresh_provider(provider, db, env)
+    target = section if section in SETTINGS_SECTIONS else "download-clients"
+    return RedirectResponse(f"/settings/{target}?test={provider}:refreshed", status_code=303)
 
 
 @router.post("/settings/test", include_in_schema=False)

@@ -27,7 +27,7 @@ def main() -> int:
 
     # Never enter tidal-dl's interactive device-login fallback in a web worker.
     if not tidal_dl.loginByConfig():
-        print("music-manager: TIDAL authentication is required", file=sys.stderr)
+        print("audiohoard: TIDAL authentication is required", file=sys.stderr)
         return 41
 
     tidal_dl.SETTINGS.downloadPath = args.output
@@ -43,7 +43,7 @@ def main() -> int:
     tidal_dl.SETTINGS.showProgress = False
     tidal_dl.start(args.url)
     if errors:
-        print("music-manager: tidal-dl download failed", file=sys.stderr)
+        print("audiohoard: tidal-dl download failed", file=sys.stderr)
         return 42
     return 0
 

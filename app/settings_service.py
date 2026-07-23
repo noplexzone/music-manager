@@ -39,6 +39,7 @@ DEFAULT_FREE_TEXT_RESULT_LIMIT = 10
 DEFAULT_PRIMARY_METADATA_PROVIDER = "musicbrainz"
 DEFAULT_DISCOGRAPHY_REFRESH_HOURS = 24
 DEFAULT_AUTO_DOWNLOAD_WANTED = False
+DEFAULT_SOURCE_SEARCH_BUDGET_SECONDS = 15
 _cache: dict[str, str] | None = None
 
 
@@ -50,6 +51,7 @@ class RuntimeSettings:
     primary_metadata_provider: str
     discography_refresh_hours: int
     auto_download_wanted: bool
+    source_search_budget_seconds: int
 
     @property
     def enabled_sources(self) -> list[str]:
@@ -134,6 +136,12 @@ async def get_runtime_settings(db: AsyncSession) -> RuntimeSettings:
         "yes",
         "on",
     }
+    try:
+        source_budget = int(
+            values.get("source_search_budget_seconds", str(DEFAULT_SOURCE_SEARCH_BUDGET_SECONDS))
+        )
+    except ValueError:
+        source_budget = DEFAULT_SOURCE_SEARCH_BUDGET_SECONDS
     return RuntimeSettings(
         _normalize_priority(priority_raw),
         max(1, min(limit, 100)),
@@ -141,6 +149,7 @@ async def get_runtime_settings(db: AsyncSession) -> RuntimeSettings:
         primary,
         max(1, min(refresh_hours, 24 * 30)),
         auto_download,
+        max(3, min(source_budget, 60)),
     )
 
 
@@ -152,6 +161,7 @@ async def save_runtime_settings(
     primary_metadata_provider: str | None = None,
     discography_refresh_hours: int | None = None,
     auto_download_wanted: bool | None = None,
+    source_search_budget_seconds: int | None = None,
 ) -> None:
     global _cache
     normalized = _normalize_priority(source_priority)
@@ -176,6 +186,9 @@ async def save_runtime_settings(
         "primary_metadata_provider": primary,
         "discography_refresh_hours": str(max(1, min(refresh_hours, 24 * 30))),
         "auto_download_wanted": "true" if bool(auto_download_wanted) else "false",
+        "source_search_budget_seconds": str(
+            max(3, min(source_search_budget_seconds or DEFAULT_SOURCE_SEARCH_BUDGET_SECONDS, 60))
+        ),
     }
     for key, value in payloads.items():
         setting = await db.get(AppSetting, key)

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Search – Music Manager{% endblock %}
+{% block title %}Search – Audiohoard{% endblock %}
 {% block content %}
 <div class="page-header">
   <h1>Search</h1>
@@ -19,20 +19,20 @@
   <form method="get" action="/search" class="form-row" style="margin-bottom:1rem;">
     <input type="text" name="q" value="{{ catalog_query | e }}" placeholder="Search artist catalog…" style="flex:1; min-width:240px;" required>
     <select name="provider">
-      <option value="primary" {% if catalog_provider == 'primary' %}selected{% endif %}>Primary ({{ primary_metadata_provider }})</option>
+      <option value="primary" {% if catalog_provider == 'primary' %}selected{% endif %}>Primary ({{ display_name(primary_metadata_provider) }})</option>
       <option value="all" {% if catalog_provider == 'all' %}selected{% endif %}>All enabled providers</option>
       {% for item in metadata_providers %}{% if item.enabled %}
-      <option value="{{ item.name }}" {% if catalog_provider == item.name %}selected{% endif %}>{{ item.name }}</option>
+      <option value="{{ item.name }}" {% if catalog_provider == item.name %}selected{% endif %}>{{ display_name(item.name) }}</option>
       {% endif %}{% endfor %}
     </select>
     <button type="submit" class="btn">Search catalog</button>
   </form>
   {% endif %}
-  {% if primary_error %}<div class="alert error">Primary provider {{ primary_metadata_provider }}: {{ primary_error }} <a href="/search?q={{ catalog_query | urlencode }}&provider=all">Search all instead</a></div>{% endif %}
+  {% if primary_error %}<div class="alert error">Primary provider {{ display_name(primary_metadata_provider) }}: {{ primary_error }} <a href="/search?q={{ catalog_query | urlencode }}&provider=all">Search all instead</a></div>{% endif %}
   {% if catalog_outcomes %}
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
       {% for outcome in catalog_outcomes %}
-      <span class="badge {{ 'ok' if outcome.state.available else 'error' }}"><span class="dot"></span>{{ outcome.provider }}{% if not outcome.state.available %}: {{ outcome.state.reason or 'unavailable' }}{% endif %}</span>
+      <span class="badge {{ 'ok' if outcome.state.available else 'error' }}"><span class="dot"></span>{{ display_name(outcome.provider) }}{% if outcome.state.extra.elapsed_ms %} · {{ outcome.state.extra.elapsed_ms }}ms{% endif %}{% if not outcome.state.available %}: {{ outcome.state.reason or 'unavailable' }}{% endif %}</span>
       {% endfor %}
     </div>
     {% set any_hits = namespace(value=false) %}
@@ -43,8 +43,8 @@
       <article class="card">
         {% if artist_hit.artwork_url %}<img src="{{ artist_hit.artwork_url | e }}" alt="" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:0.5rem;">{% endif %}
         <h3>{{ artist_hit.name }}</h3>
-        <p><span class="badge info">{{ artist_hit.provider }}</span>{% if artist_hit.disambiguation %} {{ artist_hit.disambiguation }}{% endif %}</p>
-        <a class="btn secondary" href="/artists/catalog/open?provider={{ artist_hit.provider | urlencode }}&provider_id={{ artist_hit.provider_id | urlencode }}">Open discography</a>
+        <p><span class="badge info">{{ display_name(artist_hit.provider) }}</span>{% if artist_hit.disambiguation %} {{ artist_hit.disambiguation }}{% endif %}</p>
+        <div class="form-row"><a class="btn secondary" href="/artists/catalog/open?provider={{ artist_hit.provider | urlencode }}&provider_id={{ artist_hit.provider_id | urlencode }}">Open discography</a><form method="post" action="/artists/catalog/open"><input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}"><input type="hidden" name="provider" value="{{ artist_hit.provider | e }}"><input type="hidden" name="provider_id" value="{{ artist_hit.provider_id | e }}"><input type="hidden" name="monitor" value="true"><button class="btn" type="submit">Monitor</button></form></div>
       </article>
       {% endfor %}
     {% endfor %}
@@ -68,13 +68,13 @@
     {% if source_states %}
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
       {% for name, state in source_states.items() %}
-      <span class="badge {{ 'ok' if state.available else 'error' }}"><span class="dot"></span>{{ name }}{% if not state.available %}: {{ state.reason or 'unavailable' }} <a href="/settings#provider-{{ name }}">Fix in Settings</a>{% endif %}</span>
+      <span class="badge {{ 'ok' if state.available else 'error' }}"><span class="dot"></span>{{ display_name(name) }}{% if state.details.elapsed_ms %} · {{ state.details.elapsed_ms }}ms{% endif %}{% if not state.available %}: {{ state.reason or 'unavailable' }} <a href="/settings#provider-{{ name }}">Fix in Settings</a>{% endif %}</span>
       {% endfor %}
     </div>
     {% endif %}
     {% if results %}
     <div class="table-wrap"><table><thead><tr><th>Source</th><th>Title</th><th>Artist</th><th>Album</th><th>Format</th><th>Size</th><th>Duration</th><th>Action</th></tr></thead><tbody>
-    {% for r in results %}<tr><td><span class="badge info">{{ r.source }}</span></td><td>{{ r.title or "–" }}</td><td>{{ r.artist or "–" }}</td><td>{{ r.album or "–" }}</td><td>{{ r.format or "–" }}</td><td>{{ (r.size_bytes // 1048576) ~ " MB" if r.size_bytes else "–" }}</td><td>{{ ("%d:%02d" % (r.duration_sec // 60, r.duration_sec % 60)) if r.duration_sec else "–" }}</td><td><form method="post" action="/downloads/create" style="display:inline;"><input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}"><input type="hidden" name="query" value="{{ (r.title or query) | e }}"><input type="hidden" name="source" value="{{ r.source | e }}"><input type="hidden" name="selected_result" value="{{ r.model_dump_json() | e }}"><button type="submit" class="btn secondary" style="padding:0.2rem 0.6rem; font-size:0.8rem;">Enqueue</button></form></td></tr>{% endfor %}
+    {% for r in results %}<tr><td><span class="badge info">{{ display_name(r.source) }}</span></td><td>{{ r.title or "–" }}</td><td>{{ r.artist or "–" }}</td><td>{{ r.album or "–" }}</td><td>{{ r.format or "–" }}</td><td>{{ (r.size_bytes // 1048576) ~ " MB" if r.size_bytes else "–" }}</td><td>{{ ("%d:%02d" % (r.duration_sec // 60, r.duration_sec % 60)) if r.duration_sec else "–" }}</td><td><form method="post" action="/downloads/create" style="display:inline;"><input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf', '') | e }}"><input type="hidden" name="query" value="{{ (r.title or query) | e }}"><input type="hidden" name="source" value="{{ r.source | e }}"><input type="hidden" name="selected_result" value="{{ r.model_dump_json() | e }}"><button type="submit" class="btn secondary" style="padding:0.2rem 0.6rem; font-size:0.8rem;">Enqueue</button></form></td></tr>{% endfor %}
     </tbody></table></div>
     {% else %}<div class="empty-state" role="status"><h3>No results found</h3><p>Try different fields or check provider readiness in Settings.</p><a class="btn secondary" href="/settings">Check settings</a></div>{% endif %}
   {% endif %}

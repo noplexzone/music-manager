@@ -192,3 +192,30 @@ async def test_itunes_catalog_provider(httpx_mock: HTTPXMock) -> None:
     assert (await client.search_artists("Nirvana"))[0].provider_id == "1"
     assert (await client.get_discography("1"))[0].year == "1991"
     assert (await client.get_album("2")).tracks[0].duration_sec == 301
+
+
+async def test_musicbrainz_discography_does_not_probe_cover_art_per_album(
+    httpx_mock: HTTPXMock,
+) -> None:
+    httpx_mock.add_response(
+        url=re.compile(r"https://musicbrainz[.]org/ws/2/release-group[?].*"),
+        json={
+            "release-groups": [
+                {
+                    "id": "rg-no-probe",
+                    "title": "No Probe",
+                    "primary-type": "Album",
+                    "first-release-date": "2026",
+                }
+            ]
+        },
+    )
+
+    albums = await MusicBrainzClient(UA).get_discography("artist-mbid")
+
+    assert albums[0].artwork_url == (
+        "https://coverartarchive.org/release-group/rg-no-probe/front-250"
+    )
+    assert all(
+        "coverartarchive.org" not in str(request.url) for request in httpx_mock.get_requests()
+    )

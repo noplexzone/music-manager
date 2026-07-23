@@ -9,7 +9,7 @@ if ! python -m app.services.catalog_reconcile; then
   echo "Warning: catalog metadata reconciliation failed; continuing startup" >&2
 fi
 
-echo "Starting Music Manager..."
+echo "Starting Audiohoard..."
 exec uvicorn app.main:app \
   --host "${APP_HOST:-0.0.0.0}" \
   --port "${APP_PORT:-8000}" \

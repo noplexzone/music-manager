@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -129,6 +129,22 @@ async def artists_page(
     per_page: int = Query(default=50, ge=1, le=200),
 ) -> HTMLResponse:
     artists = await get_artists_page(db, q=q, sort=sort, page=page, per_page=per_page)
+    monitored_count = (
+        (await db.execute(select(CatalogArtist).where(CatalogArtist.monitored.is_(True))))
+        .scalars()
+        .all()
+    )
+    wanted_count = (
+        (
+            await db.execute(
+                select(CatalogAlbum).where(
+                    CatalogAlbum.monitored.is_(True), CatalogAlbum.in_library.is_(False)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     filter_params: dict[str, str] = {}
     if q:
@@ -146,6 +162,8 @@ async def artists_page(
             "sort": sort,
             "per_page": per_page,
             "filter_qs": filter_qs,
+            "monitored_count": len(monitored_count),
+            "wanted_count": len(wanted_count),
         },
     )
 
@@ -176,12 +194,36 @@ async def open_catalog_artist_page(
     background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(effective_settings_dep)],
+    monitor: bool = False,
 ) -> RedirectResponse:
     artist = await open_catalog_artist(db, settings, provider, provider_id)
+    if monitor:
+        artist.monitored = True
+        artist.monitor_policy = "all"
     runtime = await get_runtime_settings(db)
     await db.commit()
     background_tasks.add_task(_enrich_artist_task, artist.id, runtime.enabled_metadata_providers)
     return RedirectResponse(f"/artists/catalog/{artist.id}", status_code=303)
+
+
+@router.post("/artists/catalog/open", include_in_schema=False)
+async def open_catalog_artist_post(
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(effective_settings_dep)],
+    _user: Annotated[object, Depends(require_mutation)],
+    provider: Annotated[str, Form()],
+    provider_id: Annotated[str, Form()],
+    monitor: Annotated[str, Form()] = "",
+) -> RedirectResponse:
+    return await open_catalog_artist_page(
+        provider,
+        provider_id,
+        background_tasks,
+        db,
+        settings,
+        monitor=monitor.lower() in {"1", "true", "yes", "on"},
+    )
 
 
 @router.get("/artists/catalog/{artist_id}", response_class=HTMLResponse)
@@ -252,10 +294,23 @@ async def monitor_catalog_artist_page(
     db: Annotated[AsyncSession, Depends(get_db)],
     _user: Annotated[object, Depends(require_mutation)],
 ) -> RedirectResponse:
-    artist = await db.get(CatalogArtist, artist_id)
+    result = await db.execute(
+        select(CatalogArtist)
+        .where(CatalogArtist.id == artist_id)
+        .options(selectinload(CatalogArtist.albums))
+    )
+    artist = result.scalar_one_or_none()
     if artist is None:
         raise HTTPException(status_code=404, detail="Catalog artist not found")
     form = await request.form()
+    if str(form.get("quick", "")).lower() in {"1", "true", "on", "yes"}:
+        enabled = not artist.monitored
+        artist.monitored = enabled
+        artist.monitor_policy = "all"
+        for album in artist.albums:
+            album.monitored = enabled
+        await db.commit()
+        return RedirectResponse(f"/artists/catalog/{artist.id}", status_code=303)
     artist.monitored = str(form.get("monitored", "")).lower() in {"1", "true", "on", "yes"}
     policy = str(form.get("monitor_policy", artist.monitor_policy or "all"))
     artist.monitor_policy = policy if policy in {"all", "albums_only", "none_new"} else "all"
@@ -286,7 +341,9 @@ async def monitored_artists_page(
         .options(selectinload(CatalogArtist.albums))
     )
     artists = list(result.scalars().all())
-    return _templates(request).TemplateResponse(request, "monitored.html", {"artists": artists})
+    return _templates(request).TemplateResponse(
+        request, "monitored.html", {"artists": artists, "monitored_count": len(artists)}
+    )
 
 
 @router.get("/wanted", response_class=HTMLResponse, include_in_schema=False)
@@ -299,7 +356,16 @@ async def wanted_page(
         .options(selectinload(CatalogAlbum.artist))
     )
     albums = list(result.scalars().all())
-    return _templates(request).TemplateResponse(request, "wanted.html", {"albums": albums})
+    monitored_count = len(
+        (await db.execute(select(CatalogArtist).where(CatalogArtist.monitored.is_(True))))
+        .scalars()
+        .all()
+    )
+    return _templates(request).TemplateResponse(
+        request,
+        "wanted.html",
+        {"albums": albums, "wanted_count": len(albums), "monitored_count": monitored_count},
+    )
 
 
 @router.get("/albums/{album_id}", response_class=HTMLResponse)

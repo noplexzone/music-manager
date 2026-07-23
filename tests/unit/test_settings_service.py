@@ -278,6 +278,7 @@ async def test_runtime_settings_persist_monitoring_defaults_and_primary_provider
         primary_metadata_provider="deezer",
         discography_refresh_hours=12,
         auto_download_wanted=True,
+        source_search_budget_seconds=9,
     )
 
     runtime = await get_runtime_settings(db_session)
@@ -287,3 +288,4 @@ async def test_runtime_settings_persist_monitoring_defaults_and_primary_provider
     assert runtime.primary_metadata_provider == "deezer"
     assert runtime.discography_refresh_hours == 12
     assert runtime.auto_download_wanted is True
+    assert runtime.source_search_budget_seconds == 9

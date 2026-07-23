@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -24,12 +27,12 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = True
 
     # Database
-    database_url: str = "sqlite+aiosqlite:///./data/music_manager.db"
+    database_url: str = "sqlite+aiosqlite:///./data/audiohoard.db"
 
     # Library naming
     naming_template: str = "{album_artist}/{year} - {album}/{disc_track} - {title}.{ext}"
     library_root: Path = Path("/music")
-    staging_root: Path = Path("/staging/music-manager")
+    staging_root: Path = Path("/staging/audiohoard")
 
     # slskd
     slskd_url: str = ""
@@ -47,8 +50,8 @@ class Settings(BaseSettings):
     ytdlp_cookies_file: str = ""
 
     # MusicBrainz
-    musicbrainz_app_name: str = "music-manager"
-    musicbrainz_app_version: str = "0.3.0"
+    musicbrainz_app_name: str = "audiohoard"
+    musicbrainz_app_version: str = "0.5.0"
     musicbrainz_contact: str = ""
 
     # Deezer
@@ -64,6 +67,20 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+    def model_post_init(self, __context: object) -> None:
+        if "database_url" not in self.model_fields_set:
+            new_db = Path("./data/audiohoard.db")
+            legacy_db = Path("./data/music_manager.db")
+            if not new_db.exists() and legacy_db.exists():
+                self.database_url = "sqlite+aiosqlite:///./data/music_manager.db"
+                logger.info("Using legacy Music Manager database path %s", legacy_db)
+        if "staging_root" not in self.model_fields_set:
+            new_staging = Path("/staging/audiohoard")
+            legacy_staging = Path("/staging/music-manager")
+            if not new_staging.exists() and legacy_staging.exists():
+                self.staging_root = legacy_staging
+                logger.info("Using legacy Music Manager staging root %s", legacy_staging)
 
     @property
     def musicbrainz_user_agent(self) -> str:

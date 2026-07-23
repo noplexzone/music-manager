@@ -21,9 +21,12 @@ _HTTP_TIMEOUT = httpx.Timeout(10.0)
 class SlskdAdapter:
     name = "slskd"
 
-    def __init__(self, base_url: str, api_key: str) -> None:
+    def __init__(
+        self, base_url: str, api_key: str, search_timeout_sec: float = _SEARCH_TIMEOUT_SEC
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._search_timeout_sec = search_timeout_sec
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -70,7 +73,7 @@ class SlskdAdapter:
                 )
 
             elapsed = 0.0
-            while elapsed < _SEARCH_TIMEOUT_SEC:
+            while elapsed < self._search_timeout_sec:
                 await asyncio.sleep(_SEARCH_POLL_INTERVAL)
                 elapsed += _SEARCH_POLL_INTERVAL
                 state_resp = await request_with_retry(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -48,6 +49,7 @@ async def search_catalog_artists(
     settings: Settings, query: str, providers: list[str]
 ) -> list[ProviderOutcome]:
     async def _one(name: str) -> ProviderOutcome:
+        started = time.perf_counter()
         provider = build_metadata_provider(name, settings)
         if provider is None:
             return ProviderOutcome(name, [], CapabilityState(False, "Unknown metadata provider"))
@@ -55,8 +57,10 @@ async def search_catalog_artists(
         if not state.available:
             return ProviderOutcome(name, [], state)
         try:
+            artists = await provider.search_artists(query)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
             return ProviderOutcome(
-                name, await provider.search_artists(query), CapabilityState(True)
+                name, artists, CapabilityState(True, extra={"elapsed_ms": elapsed_ms})
             )
         except Exception as exc:
             return ProviderOutcome(

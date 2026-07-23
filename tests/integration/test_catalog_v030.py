@@ -90,3 +90,98 @@ def test_catalog_track_matching_prefers_title_then_position() -> None:
         == 2
     )
     assert _catalog_track_for_result(result, tracks, 0, 1).id == 1
+
+
+async def test_quick_monitor_toggles_catalog_artist_and_albums(client: AsyncClient) -> None:
+    artist_id = await _seed_catalog()
+
+    response = await client.post(
+        f"/artists/catalog/{artist_id}/monitor",
+        data={"quick": "1", "csrf_token": client.cookies.get("csrf", "")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    factory = get_session_factory()
+    async with factory() as db:
+        artist = (
+            await db.scalars(select(CatalogArtist).where(CatalogArtist.id == artist_id))
+        ).one()
+        album = (
+            await db.scalars(select(CatalogAlbum).where(CatalogAlbum.artist_id == artist_id))
+        ).one()
+        assert artist.monitored is True
+        assert artist.monitor_policy == "all"
+        assert album.monitored is True
+
+    response = await client.post(
+        f"/artists/catalog/{artist_id}/monitor",
+        data={"quick": "1", "csrf_token": client.cookies.get("csrf", "")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    async with factory() as db:
+        artist = (
+            await db.scalars(select(CatalogArtist).where(CatalogArtist.id == artist_id))
+        ).one()
+        album = (
+            await db.scalars(select(CatalogAlbum).where(CatalogAlbum.artist_id == artist_id))
+        ).one()
+        assert artist.monitored is False
+        assert album.monitored is False
+
+
+async def test_search_card_monitor_opens_artist_as_monitored(
+    client: AsyncClient, monkeypatch
+) -> None:
+    async def fake_open(db, settings, provider_name: str, provider_id: str):
+        artist = CatalogArtist(name="Search Artist", mbid=provider_id)
+        db.add(artist)
+        await db.flush()
+        return artist
+
+    import app.routers.catalog as catalog_router
+
+    monkeypatch.setattr(catalog_router, "open_catalog_artist", fake_open)
+
+    response = await client.post(
+        "/artists/catalog/open",
+        data={
+            "provider": "musicbrainz",
+            "provider_id": "search-artist-mbid",
+            "monitor": "true",
+            "csrf_token": client.cookies.get("csrf", ""),
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    factory = get_session_factory()
+    async with factory() as db:
+        artist = (
+            await db.scalars(select(CatalogArtist).where(CatalogArtist.name == "Search Artist"))
+        ).one()
+        assert artist.monitored is True
+        assert artist.monitor_policy == "all"
+
+
+async def test_artists_tabs_render(client: AsyncClient) -> None:
+    artist_id = await _seed_catalog()
+    await client.post(
+        f"/artists/catalog/{artist_id}/monitor",
+        data={"quick": "1", "csrf_token": client.cookies.get("csrf", "")},
+    )
+
+    artists = await client.get("/artists")
+    monitored = await client.get("/artists/monitored")
+    wanted = await client.get("/wanted")
+
+    assert artists.status_code == 200
+    assert monitored.status_code == 200
+    assert wanted.status_code == 200
+    assert "Library" in artists.text
+    assert "Monitored (" in artists.text
+    assert "Wanted" in artists.text
+    assert "Daft Punk" in monitored.text
+    assert "Discovery" in wanted.text

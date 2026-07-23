@@ -14,9 +14,33 @@ def test_setuptools_includes_web_assets_in_built_distributions() -> None:
     assert "app" in package_data
     assert "templates/*.html" in package_data["app"]
     assert "static/css/*.css" in package_data["app"]
+    assert "static/branding/*" in package_data["app"]
     data_files = setuptools_config["data-files"]
     assert "." in data_files
     assert "CHANGELOG.md" in data_files["."]
+
+
+def test_branding_assets_exist() -> None:
+    branding = Path("app/static/branding")
+    for name in (
+        "favicon.ico",
+        "favicon-16.png",
+        "favicon-32.png",
+        "icon-32.png",
+        "apple-touch-icon.png",
+        "icon-192.png",
+        "icon-512.png",
+        "site.webmanifest",
+    ):
+        assert (branding / name).exists(), f"Missing branding asset: {name}"
+
+
+def test_webmanifest_has_audiohoard_name() -> None:
+    import json
+
+    manifest = json.loads(Path("app/static/branding/site.webmanifest").read_text(encoding="utf-8"))
+    assert manifest["name"] == "Audiohoard"
+    assert manifest["short_name"] == "Audiohoard"
 
 
 def test_settings_forms_are_native_and_not_double_submitted() -> None:

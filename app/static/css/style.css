@@ -177,3 +177,12 @@ code, .mono { padding: .1rem .28rem; border-radius: 5px; background: var(--surfa
   .provider-list li { grid-template-columns: 28px minmax(0,1fr); }.provider-list li > .badge { grid-column: 2; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+
+.artwork-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, rgba(44, 220, 203, 0.14), rgba(148, 163, 184, 0.12));
+  overflow: hidden;
+}
+.brand-icon { width: 1.75rem; height: 1.75rem; border-radius: .4rem; object-fit: cover; }

@@ -1,13 +1,13 @@
 # TIDAL-DL backend configuration
 
-Music Manager does not authenticate to TIDAL directly and never simulates TIDAL results. TIDAL support is delegated to an operator-installed, authenticated Tidal-DL backend. The source remains disabled/unavailable until that backend passes a live health check.
+Audiohoard does not authenticate to TIDAL directly and never simulates TIDAL results. TIDAL support is delegated to an operator-installed, authenticated Tidal-DL backend. The source remains disabled/unavailable until that backend passes a live health check.
 
 ## Operator setup
 
-1. Install Tidal-DL on the host or in a companion container next to the Music Manager compose stack.
-2. Authenticate with Tidal-DL using the tool's documented login flow: <https://github.com/yaronzz/Tidal-Media-Downloader>. Do not copy tokens into Music Manager source or `.env.example`.
+1. Install Tidal-DL on the host or in a companion container next to the Audiohoard compose stack.
+2. Authenticate with Tidal-DL using the tool's documented login flow: <https://github.com/yaronzz/Tidal-Media-Downloader>. Do not copy tokens into Audiohoard source or `.env.example`.
 3. Configure Tidal-DL output quality in its own config file. Choose the quality your subscription and rights allow.
-4. Set Tidal-DL's output directory to a path mounted under Music Manager `STAGING_ROOT`, for example `/staging/music-manager/tidal`.
+4. Set Tidal-DL's output directory to a path mounted under Audiohoard `STAGING_ROOT`, for example `/staging/audiohoard/tidal`.
 5. If the backend is exposed over HTTP, set `TIDAL_BACKEND_URL`. If it is wrapped as a CLI, set `TIDAL_BACKEND_PATH`. Set `TIDAL_STAGING_DIR` to the output directory.
 6. Set `TIDAL_ENABLED=true` only after the backend is authenticated and reachable.
 

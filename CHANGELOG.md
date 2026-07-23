@@ -1,8 +1,17 @@
 # Changelog
 
-All notable changes to Music Manager are documented here.
+All notable changes to Audiohoard are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [0.5.0] - 2026-07-22
+
+### Changed
+- Project renamed to Audiohoard; all visible strings, branding, and packaging updated.
+- Added `display_name()` helper and Jinja2 filter/global for provider and source labels.
+- Generated branding assets (favicon, apple-touch-icon, PWA icons, webmanifest).
+- MusicBrainz default app name and version updated to `audiohoard`/`0.5.0`.
+- Docker image, container name, database path, and staging root updated to audiohoard.
 
 ## [0.4.1] - 2026-07-22
 
