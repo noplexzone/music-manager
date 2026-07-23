@@ -4,6 +4,21 @@ All notable changes to Audiohoard are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-07-22
+
+### Added
+- Rebuilt catalog artist pages with artwork hero headers, identity chips, grouped discography cards, filter chips, compact monitor controls, and native form actions.
+- Added catalog album duplicate reconciliation for legacy punctuation-normalization collisions.
+
+### Changed
+- Cached PBKDF2-derived Fernet settings keys per process, removing repeated 200,000-iteration derivation from request-time secret decrypts.
+- Regenerated favicons with border-connected background keying to transparent alpha while keeping launcher icons opaque.
+- Enrichment fills missing artist artwork from Deezer, backfills album track counts from providers without overwriting opened tracklists, and schedules first-open background enrichment.
+
+### Fixed
+- Scoped global form-control CSS so checkboxes and radios no longer render as full-width 42px controls.
+- Normalized Unicode apostrophes, quotes, and dashes during album matching so curly/straight punctuation variants dedupe correctly.
+
 ## [0.5.0] - 2026-07-22
 
 ### Changed

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import logging
+from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlencode
 
@@ -29,10 +32,12 @@ from app.services.catalog_metadata import (
     fetch_and_store_album,
     fetch_and_store_discography,
     open_catalog_artist,
+    reconcile_duplicate_catalog_albums,
 )
 from app.settings_service import effective_settings_dep, get_runtime_settings
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+logger = logging.getLogger(__name__)
 
 
 async def _enrich_artist_task(artist_id: int, providers: list[str]) -> None:
@@ -43,13 +48,32 @@ async def _enrich_artist_task(artist_id: int, providers: list[str]) -> None:
     factory = get_session_factory()
     async with factory() as session:
         cfg = await build_effective_settings(session, get_settings())
-        artist = await session.get(CatalogArtist, artist_id)
+        result = await session.execute(
+            select(CatalogArtist)
+            .where(CatalogArtist.id == artist_id)
+            .options(selectinload(CatalogArtist.albums))
+        )
+        artist = result.scalar_one_or_none()
         if artist is not None:
             try:
                 await enrich_catalog_artist(session, cfg, artist, providers)
                 await session.commit()
-            except Exception:
+            except Exception as exc:
+                logger.exception("Catalog artist enrichment failed for artist %s", artist_id)
                 await session.rollback()
+                artist = await session.get(CatalogArtist, artist_id)
+                if artist is not None:
+                    provenance = (
+                        json.loads(artist.provenance_json or "{}")
+                        if artist.provenance_json
+                        else {}
+                    )
+                    provenance["last_enrichment_error"] = {
+                        "at": datetime.now(tz=UTC).isoformat(),
+                        "message": str(exc),
+                    }
+                    artist.provenance_json = json.dumps(provenance, sort_keys=True)
+                    await session.commit()
 
 
 def _templates(request: Request) -> Jinja2Templates:
@@ -230,17 +254,32 @@ async def open_catalog_artist_post(
 async def catalog_artist_page(
     request: Request,
     artist_id: int,
+    background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(effective_settings_dep)],
     release_type: str = "",
+    sort: str = "desc",
 ) -> HTMLResponse:
-    artist = await db.get(CatalogArtist, artist_id)
+    result = await db.execute(
+        select(CatalogArtist)
+        .where(CatalogArtist.id == artist_id)
+        .options(selectinload(CatalogArtist.albums))
+    )
+    artist = result.scalar_one_or_none()
     if artist is None:
         raise HTTPException(status_code=404, detail="Catalog artist not found")
+    runtime = await get_runtime_settings(db)
+    if artist.last_enriched_at is None and not artist.mbid:
+        background_tasks.add_task(
+            _enrich_artist_task, artist.id, runtime.enabled_metadata_providers
+        )
     try:
-        await fetch_and_store_discography(db, settings, artist)
+        if not artist.albums:
+            await fetch_and_store_discography(db, settings, artist)
+        await reconcile_duplicate_catalog_albums(db, artist.id)
         await db.commit()
     except Exception:
+        logger.exception("Catalog artist discography refresh failed for artist %s", artist_id)
         await db.rollback()
     result = await db.execute(
         select(CatalogArtist)
@@ -250,22 +289,67 @@ async def catalog_artist_page(
     artist = result.scalar_one()
     albums = sorted(
         artist.albums,
-        key=lambda album: (album.year or "0000", album.title),
-        reverse=True,
+        key=lambda album: (album.year or "0000", album.title.casefold()),
+        reverse=sort != "asc",
     )
     if release_type:
-        albums = [
-            a for a in albums if (a.release_type or "").casefold() == release_type.casefold()
-        ]
+        if release_type == "single_ep":
+            albums = [a for a in albums if (a.release_type or "").casefold() in {"single", "ep"}]
+        else:
+            albums = [
+                a for a in albums if (a.release_type or "").casefold() == release_type.casefold()
+            ]
     release_types = sorted({a.release_type for a in artist.albums if a.release_type})
+    counts_by_type: dict[str, int] = {"albums": 0, "singles_eps": 0, "compilations": 0}
+    for album in artist.albums:
+        rt = (album.release_type or "album").casefold()
+        if rt in {"single", "ep"}:
+            counts_by_type["singles_eps"] += 1
+        elif "compilation" in rt:
+            counts_by_type["compilations"] += 1
+        else:
+            counts_by_type["albums"] += 1
+    grouped_albums = (
+        [
+            (
+                "Albums",
+                [
+                    a
+                    for a in albums
+                    if (a.release_type or "album").casefold()
+                    not in {"single", "ep", "compilation"}
+                ],
+            ),
+            (
+                "Singles & EPs",
+                [a for a in albums if (a.release_type or "").casefold() in {"single", "ep"}],
+            ),
+            (
+                "Compilations",
+                [a for a in albums if "compilation" in (a.release_type or "").casefold()],
+            ),
+        ]
+        if not release_type
+        else [(release_type, albums)]
+    )
+    filter_options = [
+        ("", "All"),
+        ("Album", "Albums"),
+        ("single_ep", "Singles & EPs"),
+        ("Compilation", "Compilations"),
+    ]
     return _templates(request).TemplateResponse(
         request,
         "catalog_artist.html",
         {
             "artist": artist,
             "albums": albums,
+            "grouped_albums": grouped_albums,
             "release_types": release_types,
             "release_type": release_type,
+            "sort": sort,
+            "counts_by_type": counts_by_type,
+            "filter_options": filter_options,
         },
     )
 
@@ -277,7 +361,12 @@ async def enrich_catalog_artist_page(
     settings: Annotated[Settings, Depends(effective_settings_dep)],
     _user: Annotated[object, Depends(require_mutation)],
 ) -> RedirectResponse:
-    artist = await db.get(CatalogArtist, artist_id)
+    result = await db.execute(
+        select(CatalogArtist)
+        .where(CatalogArtist.id == artist_id)
+        .options(selectinload(CatalogArtist.albums))
+    )
+    artist = result.scalar_one_or_none()
     if artist is None:
         raise HTTPException(status_code=404, detail="Catalog artist not found")
     runtime = await get_runtime_settings(db)
@@ -395,6 +484,35 @@ async def catalog_album_page(
     )
     album = result.scalar_one()
     return _templates(request).TemplateResponse(request, "catalog_album.html", {"album": album})
+
+
+@router.post("/artists/catalog/{artist_id}/download-monitored", include_in_schema=False)
+async def download_monitored_catalog_albums(
+    artist_id: int,
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _user: Annotated[object, Depends(require_mutation)],
+) -> RedirectResponse:
+    result = await db.execute(
+        select(CatalogArtist)
+        .where(CatalogArtist.id == artist_id)
+        .options(selectinload(CatalogArtist.albums))
+    )
+    artist = result.scalar_one_or_none()
+    if artist is None:
+        raise HTTPException(status_code=404, detail="Catalog artist not found")
+    for album in artist.albums:
+        if not album.monitored or album.in_library:
+            continue
+        query = f"{artist.name} {album.title}".strip()
+        job = Job(
+            source="priority", query=query, status=JobStatus.pending, catalog_album_id=album.id
+        )
+        db.add(job)
+        await db.flush()
+        background_tasks.add_task(run_job, job.id)
+    await db.commit()
+    return RedirectResponse("/downloads", status_code=303)
 
 
 @router.post("/albums/{album_id}/download", include_in_schema=False)

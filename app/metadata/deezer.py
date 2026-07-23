@@ -202,7 +202,14 @@ def _parse_artist(data: dict[str, object]) -> ArtistHit:
         provider_id=did,
         deezer_id=did or None,
         name=str(data.get("name") or ""),
-        artwork_url=str(data.get("picture_medium") or data.get("picture") or "") or None,
+        artwork_url=str(
+            data.get("picture_xl")
+            or data.get("picture_big")
+            or data.get("picture_medium")
+            or data.get("picture")
+            or ""
+        )
+        or None,
     )
 
 
@@ -227,7 +234,14 @@ def _parse_album_hit(data: dict[str, object], artist_id: str | None) -> AlbumHit
         artist_provider_id=artist_id,
         year=_year(data.get("release_date")),
         release_type=str(data.get("record_type") or "") or None,
-        artwork_url=str(data.get("cover_medium") or data.get("cover") or "") or None,
+        artwork_url=str(
+            data.get("cover_xl")
+            or data.get("cover_big")
+            or data.get("cover_medium")
+            or data.get("cover")
+            or ""
+        )
+        or None,
         track_count=_to_int(data.get("nb_tracks")),
     )
 

@@ -60,7 +60,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Audiohoard",
-        version="0.5.0",
+        version="0.6.0",
         description="Self-hosted music acquisition and library management",
         docs_url="/api/docs",
         redoc_url="/api/redoc",
